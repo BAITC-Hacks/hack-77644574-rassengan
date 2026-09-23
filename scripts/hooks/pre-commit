@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# hackathon-kit hook: pre-commit  (warns about rule problems; blocks only on secrets/.env)
+ROOT=$(git rev-parse --show-toplevel)
+[ -x "$ROOT/scripts/rules-check.sh" ] || exit 0
+"$ROOT/scripts/rules-check.sh" --stage commit
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "Commit blocked. Fix the problem above, or bypass knowingly with: git commit --no-verify"
+fi
+exit "$rc"

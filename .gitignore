@@ -1,0 +1,21 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# node
+node_modules/
+dist/
+
+# os / editor
+.DS_Store
+.idea/
+
+# local agent state
+.claude/settings.local.json
