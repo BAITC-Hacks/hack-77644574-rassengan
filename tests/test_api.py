@@ -29,6 +29,25 @@ def test_invalid_input(client, changes):
     assert client.post("/match", json=request).status_code == 422
 
 
+@pytest.mark.parametrize("day", ["2026-09-23", "2026-12-31"])
+def test_calendar_boundaries_accepted(client, day):
+    response = client.post("/match", json=dict(city="Астана", category="Ведущий",
+        date=day, event_type="свадьба", budget_kzt=300000))
+    assert response.status_code == 200
+    assert response.json()["request"]["date"] == day
+
+
+@pytest.mark.parametrize("day", ["2026-09-22", "2027-01-01", "2026-01-01"])
+def test_outside_calendar_returns_russian_error(client, day):
+    response = client.post("/match", json=dict(city="Астана", category="Ведущий",
+        date=day, event_type="свадьба", budget_kzt=300000))
+    assert response.status_code == 422
+    error = response.json()["detail"][0]
+    assert error["loc"] == ["body", "date"]
+    assert error["msg"] == (
+        "Календарь занятости покрывает только 23.09.2026–31.12.2026; выберите дату в этом диапазоне.")
+
+
 def test_options_from_loaded_dataset(client):
     from app.matching import dataset_options
     response = client.get("/options")

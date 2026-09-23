@@ -18,8 +18,9 @@ from datetime import date as Date
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic_core import PydanticCustomError
 
-from app.data import Contractor
+from app.data import CALENDAR_END, CALENDAR_START, Contractor
 from app.explain import apply_explanations
 
 
@@ -36,8 +37,16 @@ class MatchRequest(BaseModel):
     @field_validator("date")
     @classmethod
     def valid_date(cls, value: str) -> str:
-        if Date.fromisoformat(value).isoformat() != value:
+        parsed = Date.fromisoformat(value)
+        if parsed.isoformat() != value:
             raise ValueError("Use YYYY-MM-DD")
+        if not CALENDAR_START <= parsed <= CALENDAR_END:
+            raise PydanticCustomError(
+                "calendar_range",
+                "Календарь занятости покрывает только "
+                f"{CALENDAR_START:%d.%m.%Y}–{CALENDAR_END:%d.%m.%Y}; "
+                "выберите дату в этом диапазоне.",
+            )
         return value
 
 

@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 DEFAULT_PATH = Path(__file__).resolve().parent.parent / "data/hackathon-dataset-anonymized.csv"
+# Case spec calendar coverage: docs/TASK.md §3, docs/CASE_SPEC_RU.md.
+CALENDAR_START = date(2026, 9, 23)
+CALENDAR_END = date(2026, 12, 31)
 
 
 @dataclass

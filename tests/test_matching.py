@@ -2,6 +2,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from app.data import load_profiles
 from app.matching import match
@@ -17,6 +18,20 @@ def profiles():
 @pytest.fixture
 def request_data():
     return dict(city="Астана", date="2026-10-15", event_type="свадьба", category="Ведущий", budget_kzt=300000)
+
+
+@pytest.mark.parametrize("day", ["2026-09-23", "2026-12-31"])
+def test_calendar_boundaries_accepted(profiles, request_data, day):
+    result = match(dict(request_data, date=day), profiles)
+    assert result["request"]["date"] == day
+
+
+@pytest.mark.parametrize("day", ["2026-09-22", "2027-01-01", "2026-01-01"])
+def test_outside_calendar_rejected(profiles, request_data, day):
+    with pytest.raises(ValidationError) as error:
+        match(dict(request_data, date=day), profiles)
+    assert error.value.errors()[0]["msg"] == (
+        "Календарь занятости покрывает только 23.09.2026–31.12.2026; выберите дату в этом диапазоне.")
 
 
 def test_busy_excluded(profiles, request_data):
