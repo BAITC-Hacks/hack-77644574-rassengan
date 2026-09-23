@@ -37,7 +37,7 @@ Quality of explanations > honest handling of rare, busy and empty categories > s
 ## 3. Required inputs, outputs and data
 - Input: city, date, event type (format), contractor category, budget ₸; optional duration (h), language.
 - Output: up to 3 cards {name, category, city, price, 1–2 sentence specific explanation} + an outcome status + a reason when fewer than 3.
-- Data: `hackathon-dataset-anonymized.jsonl`: 66 profiles (also .csv and HTML preview). Fields: id, anon_name, categories[], city (Алматы/Астана/Зарубежье), price_from_kzt, event_formats[] (свадьба, той, корпоратив, конференция, юбилей, день рождения), languages[], max_hours (null = not presence-bound), busy_dates (window 23.09.2026–31.12.2026), description (RU free text), flags synthetic / city_imputed / price_imputed.
+- Data: official catalog, 66 profiles; the spec names `hackathon-dataset-anonymized.jsonl` (also .csv and HTML preview); we use the provided `data/hackathon-dataset-anonymized.csv` (the loader also accepts .jsonl). Fields: id, anon_name, categories[], city (Алматы/Астана/Зарубежье), price_from_kzt, event_formats[] (свадьба, той, корпоратив, конференция, юбилей, день рождения), languages[], max_hours (null = not presence-bound), busy_dates (window 23.09.2026–31.12.2026), description (RU free text), flags synthetic / city_imputed / price_imputed.
 - Our own synthetic profiles are allowed in the same format with `synthetic: true`; the demo must show which profiles are real and which are ours.
 - Calendar load: Sep–Nov 30–50% busy, Dec 70–80% (in December, dense categories have almost no one free on weekends: that's the season, not a bug).
 
@@ -46,10 +46,10 @@ Quality of explanations > honest handling of rare, busy and empty categories > s
 - Must work without any personal account (rule 5.6.6): without a key, a deterministic template explainer is used; README documents both modes.
 
 ## 5. Deliverables
-- [ ] Working project in the team repo
-- [ ] README (install, run, architecture, pipeline explanation, demo queries)
-- [ ] Demo: at least the 3 required queries + the "two dates" query, live
-- [ ] Other: none
+- [x] Working project in the team repo
+- [x] README (install, run, architecture, pipeline explanation, demo queries)
+- [x] Demo: at least the 3 required queries + the "two dates" query, live (README section «Проверка основного сценария», `make demo`)
+- Other: none required
 
 ## 6. Our decision
 - Main scenario: request (city, date, event type, category, budget[, hours, language]) → hard filters (city, category, busy date, format, budget, hours, language) with a reason counted for every rejected candidate → deterministic scoring and ranking (stable tie-break by id) → top ≤3 → explanation per card built from the concrete matched facts (LLM rewrites facts into 1–2 sentences; deterministic template fallback) → one of three explicit outcomes + "why fewer than 3" summary from the rejection counts.
@@ -60,4 +60,4 @@ Quality of explanations > honest handling of rare, busy and empty categories > s
 ## 7. Questions asked to organizers and their answers
 | Question | Answer | Who / when |
 |---|---|---|
-| Where is the dataset file for this case? | | |
+| Where is the dataset file for this case? | Official case materials: CSV + HTML preview, saved in `data/` | Team, 23.09 13:20 |
