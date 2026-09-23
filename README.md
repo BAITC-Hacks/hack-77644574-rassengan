@@ -60,10 +60,10 @@
 - **Данные:** официальный анонимизированный каталог кейса, `data/hackathon-dataset-anonymized.csv` (66 профилей), и HTML-превью. Описание полей: [`data/README.md`](data/README.md). Собственные профили в каталог не добавлялись. Тестовые синтетические профили лежат отдельно в `tests/fixtures/`.
 
 ## Системные требования (System requirements)
-- macOS или Linux (на Windows: WSL или команды вручную, см. ниже).
-- Python **3.9 или новее**, `make`, доступ к PyPI для установки зависимостей.
+- macOS, Linux или Windows (на Windows без `make`, см. блок PowerShell ниже).
+- Python **3.9 или новее** (Python 3.8 не подходит), `make` (для macOS/Linux), доступ к PyPI для установки зависимостей.
 - Около 200 МБ диска для виртуального окружения. GPU не нужен.
-- Для объяснений от LLM нужен интернет и ключ OpenAI. Без них всё работает на шаблонах.
+- Для объяснений от LLM нужен интернет, ключ OpenAI и имя модели (`OPENAI_API_KEY` + `OPENAI_MODEL`). Без них всё работает на шаблонах.
 
 ## Зависимости (Dependencies)
 Закреплены в [`requirements.txt`](requirements.txt): `fastapi`, `uvicorn`, `pydantic`, `python-dotenv`, `openai`, `pytest`, `httpx`. `make setup` ставит их в локальное окружение `.venv`, а не в системный Python.
@@ -78,15 +78,25 @@ make run                # http://localhost:8000
 ```
 Откройте **http://localhost:8000** в браузере.
 
-Без `make` (например, на Windows):
+Без `make` (Linux/macOS):
 ```bash
+python3 --version                                         # нужен 3.9 или новее
 python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt      # Windows: .venv\Scripts\python
+.venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python -m uvicorn app.main:app --port 8000
 ```
 
+**Windows (PowerShell).** Проверьте версию: на некоторых машинах `python` указывает на старый Python 3.8. Используйте лаунчер `py` с версией 3.9+ (проверено на 3.12):
+```powershell
+py -3.12 --version                                        # должно быть 3.9 или новее; иначе установите Python 3.12
+py -3.12 -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python -m uvicorn app.main:app --port 8000
+```
+Тесты на Windows: `.venv\Scripts\python -m pytest -q`.
+
 ## Доступ для проверяющих: личные аккаунты не нужны (Access for judges)
-Регистрации и логина нет. **Без ключа OpenAI** сервис полностью работоспособен: все фильтры, ранжирование, исходы и объяснения работают, объяснения строятся детерминированным шаблоном из фактов карточки (на карточке пометка «шаблон»). Чтобы увидеть LLM-объяснения (пометка «AI-объяснение»), достаточно подставить любой ключ OpenAI в `.env`.
+Регистрации и логина нет. **Без ключа OpenAI** сервис полностью работоспособен: все фильтры, ранжирование, исходы и объяснения работают, объяснения строятся детерминированным шаблоном из фактов карточки (на карточке пометка «шаблон»). Чтобы увидеть LLM-объяснения (пометка «AI-объяснение»), нужно заполнить в `.env` **обе** переменные: `OPENAI_API_KEY` и `OPENAI_MODEL` (например, `gpt-5.4-mini`). Если заполнена только одна, используются шаблоны.
 
 ## Конфигурация: переменные окружения (Configuration, environment variables)
 | Переменная | Назначение | Пример |
@@ -117,7 +127,7 @@ curl -s -X POST localhost:8000/match -H 'Content-Type: application/json' \
 ```bash
 make test
 ```
-77 офлайн-тестов (реальные вызовы API в тестах заблокированы, см. `tests/conftest.py`):
+103 офлайн-теста (реальные вызовы API в тестах заблокированы, см. `tests/conftest.py`):
 - `tests/test_dod.py`: Definition of Done кейса на реальном каталоге: детерминизм, разная выдача на двух датах из-за занятости, плотная/редкая/пустая категория, словесное объяснение пустого результата, скорость;
 - `tests/test_matching.py`: фильтры, причины отказа, три исхода, «почему меньше трёх»;
 - `tests/test_explain.py`: LLM-объяснения через заглушку: принятие хорошего ответа; откат на шаблон при общих фразах, выдуманных числах, похожих текстах, ошибке или таймауте;
