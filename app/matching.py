@@ -233,7 +233,7 @@ def match(request, profiles: List[Contractor]) -> dict:
         cards.append(card)
         trace["score"] = card["score"]
     cards.sort(key=lambda card: (-card["score"], card["id"]))
-    _add_distinct_facts(cards[:3], {p.id: p for p in candidates})
+    _add_distinct_facts(cards[:3], {p.id: p for p in candidates}, req.event_type)
     for card in cards[:3]:
         # Equal scores: the order is only an id tie-break, so no card may claim an advantage.
         card["score_tied"] = any(other["score"] == card["score"] for other in cards[:3] if other is not card)
@@ -256,7 +256,7 @@ def _norm_text(text):
     return " ".join(text.casefold().replace("ё", "е").split())
 
 
-def _add_distinct_facts(top, by_id):
+def _add_distinct_facts(top, by_id, event_type=""):
     """DoD2: give each shown card a clause of its own full description that the other shown cards lack.
 
     Uses only catalogue text (no invented differences). Brand names and praise do not count as a
@@ -276,6 +276,11 @@ def _add_distinct_facts(top, by_id):
             words = core(part).split()
             has_digit = bool(re.search(r"\d", part))
             if praise.search(part) or not words or core(part) in others:
+                continue
+            # Only details relevant to the requested event: skip clauses about other event types.
+            if any(_mentions(part, stems) for event, stems in EVENT_STEMS.items() if event != _key(event_type)):
+                continue
+            if re.search(r"похорон|поминальн|обрезани", part, re.I):
                 continue
             if len(words) < 3 and not has_digit:
                 continue

@@ -51,3 +51,14 @@ def test_no_duplicate_explanations_across_catalogue_grid(profiles):
                     duplicates.append((city, category, event_type, day, budget))
     assert checked > 600
     assert duplicates == []
+
+
+def test_distinct_fact_is_relevant_to_requested_event(profiles):
+    """Independent review: for a той request, wedding-only clauses must not become the distinct fact."""
+    from app.matching import EVENT_STEMS, _mentions
+    result = match(dict(city="Алматы", date="2026-10-15", event_type="той", category="Ведущий",
+                        budget_kzt=1000000, language="казахский"), profiles)
+    for card in result["cards"]:
+        for fact in card["matched_facts"]:
+            if fact["kind"] == "distinct":
+                assert not any(_mentions(fact["text"], stems) for event, stems in EVENT_STEMS.items() if event != "той")

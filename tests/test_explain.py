@@ -557,3 +557,23 @@ def test_tied_scores_allow_plain_fit_explanation():
         {"kind": "distinct", "text": "отличие в описании: «4 вокалиста»"}]}
     text = "В составе группы 4 вокалиста, репертуар подходит для корпоратива. Цена от 1 150 000 ₸ при бюджете 4 000 000 ₸."
     assert validate(text, card, [])[0]
+
+
+def test_late_first_answer_uses_template(monkeypatch):
+    """Independent review: an answer arriving after the LLM budget must not be shown."""
+    _, client = mock_client(monkeypatch, {'explanations': [{'id': 'A', 'text': GOOD_TWO}]})
+    monkeypatch.setenv('LLM_TIMEOUT_S', '8')
+    monkeypatch.setattr(explain, 'monotonic', MagicMock(side_effect=[100, 109]))
+    cards = [revision_card()]
+    assert explain.apply_explanations(QUERY, cards) == 'template'
+    assert cards[0]['explanation_source'] == 'template'
+
+
+def test_tied_scores_allow_more_than_number():
+    """«более 12 лет» states a fact, not a comparison between cards."""
+    card = {"score_tied": True, "request": {"date": "2026-10-15"}, "matched_facts": [
+        {"kind": "price", "text": "цена от 1 000 000 ₸ при бюджете 1 000 000 ₸"},
+        {"kind": "description", "text": "из описания: «опыт более 12 лет»"}]}
+    text = "В описании указан опыт более 12 лет ведения мероприятий. Цена от 1 000 000 ₸ при бюджете 1 000 000 ₸."
+    assert validate(text, card, [])[0]
+    assert not validate("У подрядчика более широкий состав. Цена от 1 000 000 ₸ при бюджете 1 000 000 ₸.", card, [])[0]

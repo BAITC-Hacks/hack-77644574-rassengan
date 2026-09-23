@@ -118,6 +118,10 @@ def _generate_verified(request, cards):
     except Exception as exc:
         logging.getLogger(__name__).warning("Explainer unavailable (%s)", type(exc).__name__)
         output = None
+    now = monotonic()
+    if now > deadline:
+        # A late answer breaks the response-time budget: use templates instead.
+        output = None
     results, rejected, previous = {}, [], []
     for card in cards:
         text = output.get(card["id"]) if isinstance(output, dict) else None
@@ -131,7 +135,7 @@ def _generate_verified(request, cards):
                 rejected.append({"id": card["id"], "text": text, "reason": reason})
         results[card["id"]] = result
         previous.append(result["explanation"])
-    remaining = deadline - monotonic()
+    remaining = deadline - now
     if rejected and remaining >= 1.5:
         try:
             revised = revise_explanations(request, cards, rejected, remaining)
