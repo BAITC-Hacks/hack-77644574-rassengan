@@ -27,3 +27,16 @@ def test_invalid_input(client, changes):
     request = dict(city="Астана", category="Ведущий", date="2026-10-15", event_type="свадьба", budget_kzt=300000)
     request.update(changes)
     assert client.post("/match", json=request).status_code == 422
+
+
+def test_options_from_loaded_dataset(client):
+    from app.matching import dataset_options
+    response = client.get("/options")
+    assert response.status_code == 200
+    assert response.json() == dataset_options(app.state.profiles)
+    assert set(response.json()) == {"cities", "categories", "event_formats", "languages"}
+    assert all(values == sorted(set(values)) for values in response.json().values())
+    page = client.get("/").text
+    assert "fetch('/options')" in page
+    assert '<select name="category"' in page
+    assert "score_breakdown" in page and "data.trace" in page

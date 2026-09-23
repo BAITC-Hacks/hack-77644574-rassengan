@@ -8,19 +8,36 @@ body{font:16px system-ui;max-width:820px;margin:32px auto;padding:0 20px;color:#
 </style>
 <h1>Подбор подрядчиков</h1>
 <form id="form">
-<label>Город<select name="city"><option>Алматы</option><option>Астана</option><option>Зарубежье</option></select></label>
+<label>Город<select name="city" required></select></label>
 <label>Дата<input name="date" type="date" value="2026-10-15" required></label>
-<label>Тип мероприятия<select name="event_type"><option>свадьба</option><option>той</option><option>корпоратив</option><option>конференция</option><option>юбилей</option><option>день рождения</option></select></label>
-<label>Категория<input name="category" value="Ведущий" required></label>
+<label>Тип мероприятия<select name="event_type" required></select></label>
+<label>Категория<select name="category" required></select></label>
 <label>Бюджет, ₸<input name="budget_kzt" type="number" min="0" step="1" value="1000000" required></label>
 <label>Длительность, ч (необязательно)<input name="hours" type="number" min="0.1" step="any"></label>
-<label>Язык (необязательно)<select name="language"><option value="">Любой</option><option>русский</option><option>казахский</option><option>английский</option></select></label>
+<label>Язык (необязательно)<select name="language"></select></label>
 <button type="submit">Подобрать</button>
 </form>
 <section id="results" aria-live="polite"></section>
 <script>
 const form=document.getElementById('form'), results=document.getElementById('results');
 function add(parent,tag,text,className){const el=document.createElement(tag);el.textContent=text;if(className)el.className=className;parent.append(el);return el;}
+async function loadOptions(){
+ const button=form.querySelector('button');button.disabled=true;
+ try{const response=await fetch('/options');if(!response.ok)throw new Error('Не удалось загрузить каталог.');
+ const data=await response.json();
+ for(const [field,key] of Object.entries({city:'cities',category:'categories',event_type:'event_formats',language:'languages'})){
+ const select=form.elements[field];select.replaceChildren();
+ if(field==='language'){const option=add(select,'option','Любой');option.value='';}
+ for(const value of data[key]){const option=add(select,'option',value);option.value=value;}
+ }
+ for(const [field,value] of Object.entries({city:'Алматы',category:'Ведущий',event_type:'свадьба'})){
+ if([...form.elements[field].options].some(option=>option.value===value))form.elements[field].value=value;
+ }
+ button.disabled=false;
+ }catch(error){add(results,'p',error.message+' Обновите страницу, чтобы повторить.');}
+}
+loadOptions();
+const scoreLabels={event_relevance:'Формат в описании',category_relevance:'Категория в описании',language:'Языки',hours_headroom:'Запас часов',value_for_money:'Цена',data_quality:'Качество данных'};
 form.addEventListener('submit',async event=>{
  event.preventDefault();results.replaceChildren();add(results,'p','Подбираем…');form.querySelector('button').disabled=true;
  const request=Object.fromEntries(new FormData(form));request.budget_kzt=Number(request.budget_kzt);request.hours=request.hours?Number(request.hours):null;request.language=request.language||null;
@@ -29,7 +46,12 @@ form.addEventListener('submit',async event=>{
  const data=await response.json();results.replaceChildren();add(results,'h2',data.message);
  if(data.why_fewer_than_3)add(results,'p',data.why_fewer_than_3);
  for(const card of data.cards){const article=add(results,'article','');add(article,'h3',card.name);add(article,'p',card.category+' · '+card.city+' · '+(card.price_unknown?'Цена требует уточнения':'от '+card.price_from_kzt.toLocaleString('ru-RU')+' ₸'));
- const flags=[];if(card.synthetic)flags.push('Синтетический профиль');if(card.city_imputed)flags.push('Город проставлен при подготовке данных');if(card.price_imputed)flags.push('Цена проставлена при подготовке данных');if(flags.length)add(article,'p',flags.join(' · '),'flags');add(article,'p',card.explanation);}
+ const flags=[];if(card.synthetic)flags.push('Синтетический профиль');if(card.city_imputed)flags.push('Город проставлен при подготовке данных');if(card.price_imputed)flags.push('Цена проставлена при подготовке данных');if(flags.length)add(article,'p',flags.join(' · '),'flags');add(article,'p',card.explanation);
+ const details=add(article,'details','');add(details,'summary','Расчёт оценки: '+card.score);
+ for(const [key,points] of Object.entries(card.score_breakdown))add(details,'p',(scoreLabels[key]||key)+': '+points);
+ }
+ const trace=add(results,'details','');add(trace,'summary','Проверка всех кандидатов ('+data.candidate_count+')');
+ for(const candidate of data.trace)add(trace,'p',candidate.id+' · '+candidate.name+' — '+(candidate.status==='passed'?'Проходит; оценка '+candidate.score:'Отклонён: '+candidate.reason));
  }catch(error){results.replaceChildren();add(results,'p',error.message||'Ошибка соединения.');}finally{form.querySelector('button').disabled=false;}
 });
 </script>

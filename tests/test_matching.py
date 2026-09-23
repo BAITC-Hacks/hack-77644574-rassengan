@@ -53,7 +53,7 @@ def test_none_pass(profiles, request_data):
 def test_fewer_than_three(profiles, request_data):
     result = match(dict(request_data, budget_kzt=160000), profiles)
     assert len(result["cards"]) == 2
-    assert "цена выше бюджета: 1" in result["why_fewer_than_3"]
+    assert "1 с ценой выше бюджета" in result["why_fewer_than_3"]
 
 
 def test_different_explanations(profiles, request_data):
@@ -87,10 +87,60 @@ def test_first_rejection_reason(profiles, request_data, changes, reason):
 def test_price_ranking_and_id_tie(profiles, request_data):
     base = profiles[1]
     choices = [replace(base, id="B"), replace(base, id="A"), replace(base, id="C", price_from_kzt=200000)]
-    assert [c["id"] for c in match(request_data, choices)["cards"]] == ["A", "B", "C"]
+    assert [c["id"] for c in match(request_data, choices)["cards"]] == ["C", "A", "B"]
 
 
 def test_rare_category_without_rejections(profiles, request_data):
     result = match(dict(request_data, city="Алматы", category="Флорист"), profiles)
     assert result["outcome"] == "found"
-    assert "всего 1 профилей" in result["why_fewer_than_3"]
+    assert "всего 1 профиль" in result["why_fewer_than_3"]
+
+
+def test_normalization_returns_canonical_values(profiles, request_data):
+    expected = match(dict(request_data, language="русский"), profiles)
+    noisy = {key: "  " + value.swapcase() + "  " if key in
+             ("city", "category", "event_type", "language") else value
+             for key, value in dict(request_data, language="русский").items()}
+    assert match(noisy, profiles) == expected
+
+
+@pytest.mark.parametrize("event, description", [
+    ("свадьба", "Свадебные мероприятия"), ("той", "Проведение тоев"),
+    ("корпоратив", "Корпоративы"), ("конференция", "Бизнес форумы"),
+    ("юбилей", "Юбилейные вечера"), ("день рождения", "Birthday party"),
+])
+def test_event_stems(profiles, request_data, event, description):
+    base = replace(profiles[1], event_formats=[event], description=description)
+    card = match(dict(request_data, event_type=event), [base])["cards"][0]
+    assert card["score_breakdown"]["event_relevance"] == 40
+
+
+def test_score_components_and_quality_ties(profiles, request_data):
+    base = replace(profiles[1], description="Свадебный ведущий", languages=["русский", "казахский"],
+                   max_hours=10, price_from_kzt=150000, synthetic=False,
+                   price_imputed=False, city_imputed=False)
+    dirty = replace(base, id="A", synthetic=True, price_imputed=True, city_imputed=True)
+    unknown = replace(base, id="C", price_from_kzt=None)
+    result = match(dict(request_data, hours=5), [dirty, replace(base, id="B"), unknown])
+    assert [c["id"] for c in result["cards"]] == ["B", "A", "C"]
+    assert result["cards"][0]["score_breakdown"] == dict(
+        event_relevance=40, category_relevance=20, language=2,
+        hours_headroom=5, value_for_money=2.5, data_quality=0)
+    assert result["cards"][2]["score_breakdown"]["value_for_money"] == -2
+    card = match(dict(request_data, language="русский", budget_kzt=0),
+                 [replace(base, price_from_kzt=0)])["cards"][0]
+    assert card["score_breakdown"]["value_for_money"] == 5
+    assert card["score_breakdown"]["language"] == 10
+
+
+def test_short_synonym_does_not_match_inside_word(profiles, request_data):
+    p = replace(profiles[1], event_formats=["день рождения"], description="Другой формат")
+    card = match(dict(request_data, event_type="день рождения"), [p])["cards"][0]
+    assert card["score_breakdown"]["event_relevance"] == 0
+
+
+def test_absent_category_lists_available_cities(profiles, request_data):
+    result = match(dict(request_data, category="Флорист"), profiles)
+    assert result["available_cities"] == ["Алматы"]
+    assert "Алматы" in result["message"]
+    assert result["trace"] == []

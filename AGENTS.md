@@ -29,7 +29,7 @@
 
 ## Working together (Codex <-> Claude Code)
 - Claude Code can delegate a build step to Codex with the `ask-codex` skill (`codex exec`).
-- Codex can call Claude Code through the MCP server `claude` (configured in `~/.codex/config.toml`, runs `claude mcp serve`): use its `Agent` tool for a review or research task, or run `claude -p "<prompt>"` in the shell.
+- Codex can ask Claude Code for a review or second opinion by running `claude -p "<prompt>"` in the shell (read-only prompts, e.g. "Review git diff against docs/TASK.md. Do not edit files."). The MCP server `claude` (`claude mcp serve`) gives Codex Claude's file and shell tools only; its `Agent` tool has no agent types in this mode, so do not use it.
 - Only one agent edits files at a time. Commit between handoffs so each diff is reviewable.
 
 ## Push advice (applies to every agent)
