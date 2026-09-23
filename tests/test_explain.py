@@ -28,6 +28,8 @@ def batch_stub(monkeypatch, transform=lambda text, i: text):
                 for i, c in enumerate(cards)}
     stub = MagicMock(side_effect=response)
     monkeypatch.setattr(explain, "explain_cards", stub)
+    monkeypatch.setattr(explain, "revise_explanations", lambda request, cards, rejected, timeout:
+                        {row["id"]: row["text"] for row in rejected})
     return stub
 
 
@@ -78,7 +80,7 @@ def test_mocked_llm_internal_id_falls_back(profiles, monkeypatch):
         {"id": c["id"], "text": "У HK-90001 в описании есть опыт ведения свадеб."}
         for c in cards]})
     result = match(QUERY, profiles)
-    client.chat.completions.create.assert_called_once()
+    assert client.chat.completions.create.call_count == 2
     assert result["explainer"] == "template"
     for card in result["cards"]:
         assert card["explanation_source"] == "template"
@@ -422,3 +424,112 @@ def test_llm_receives_price_certainty_and_prompt_rules(monkeypatch, unknown, imp
     assert 'Не упоминай незапрошенные поля' in prompt
     assert 'ТОЛЬКО если price_unknown=true' in prompt
     assert 'Никогда не используй в тексте внутренние названия' in prompt
+
+
+def revision_card(ident='A'):
+    return {'id': ident, 'name': 'Подрядчик', 'city': 'Алматы', 'price_from_kzt': 100000,
+            'price_unknown': False, 'price_imputed': False, 'matched_facts': [
+                {'kind': 'format', 'text': 'принимает формат «свадьба»'},
+                {'kind': 'price', 'text': 'цена от 100000 тенге при бюджете 1000000 тенге'},
+                {'kind': 'description', 'text': 'из описания: «Живая музыка»'}]}
+
+
+def api_reply(rows):
+    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+        content=json.dumps({'explanations': rows}, ensure_ascii=False)))])
+
+
+BAD_THREE = 'Принимает формат «свадьба». Есть живая музыка. Цена от 100000 тенге.'
+GOOD_TWO = 'Принимает формат «свадьба» с живой музыкой. Цена от 100000 тенге.'
+
+
+def test_revision_accepted_and_final_result_cached(monkeypatch):
+    constructor, client = mock_client(monkeypatch, {})
+    client.chat.completions.create.side_effect = [
+        api_reply([{'id': 'A', 'text': BAD_THREE}]), api_reply([{'id': 'A', 'text': GOOD_TWO}])]
+    monkeypatch.setattr(explain, 'monotonic', MagicMock(side_effect=[100, 101, 102]))
+    monkeypatch.setenv('LLM_TIMEOUT_S', '8')
+    cards = [revision_card()]
+    assert explain.apply_explanations(QUERY, cards) == 'llm'
+    assert cards[0]['explanation'] == GOOD_TWO
+    assert cards[0]['explanation_attempts'] == 2
+    assert 'fallback_reason' not in cards[0]
+    assert client.chat.completions.create.call_count == 2
+    assert [call.kwargs['timeout'] for call in constructor.call_args_list] == [8, 7]
+    calls = client.chat.completions.create.call_args_list
+    first, second = [json.loads(call.kwargs['messages'][1]['content']) for call in calls]
+    assert second['cards'] == first['cards']
+    assert second['rejected'] == [{'id': 'A', 'text': BAD_THREE, 'reason': 'Больше двух предложений'}]
+    assert all(call.kwargs['temperature'] == 0 and call.kwargs['response_format'] == {'type': 'json_object'} for call in calls)
+    fresh = [revision_card()]
+    assert explain.apply_explanations(QUERY, fresh) == 'llm'
+    assert fresh == cards
+    fresh[0]['explanation'] = 'changed by caller'
+    explain.apply_explanations(QUERY, fresh)
+    assert fresh == cards
+    assert client.chat.completions.create.call_count == 2
+
+
+@pytest.mark.parametrize('revised, reason', [
+    ('В rank_reason указан формат «свадьба».', 'Технический термин в тексте'),
+    ('Отличный выбор для вашего мероприятия.', 'Общая рекламная фраза'),
+])
+def test_revision_rejected_uses_last_reason(monkeypatch, revised, reason):
+    _, client = mock_client(monkeypatch, {})
+    client.chat.completions.create.side_effect = [api_reply([{'id': 'A', 'text': BAD_THREE}]),
+                                               api_reply([{'id': 'A', 'text': revised}])]
+    cards = [revision_card()]
+    assert explain.apply_explanations(QUERY, cards) == 'template'
+    assert cards[0]['fallback_reason'] == reason
+    assert cards[0]['explanation_attempts'] == 2
+    assert cards[0]['explanation'] == explain.template_explanation(cards[0], cards)
+    assert client.chat.completions.create.call_count == 2
+
+
+def test_revision_exception_falls_back(monkeypatch):
+    _, client = mock_client(monkeypatch, {})
+    client.chat.completions.create.side_effect = [api_reply([{'id': 'A', 'text': BAD_THREE}]), TimeoutError('offline')]
+    cards = [revision_card()]
+    assert explain.apply_explanations(QUERY, cards) == 'template'
+    assert cards[0]['explanation_attempts'] == 2
+    assert 'AI не вернул исправленное объяснение' in cards[0]['fallback_reason']
+    assert client.chat.completions.create.call_count == 2
+
+
+@pytest.mark.parametrize('valid, elapsed', [(True, 1), (False, 6.6), (False, 8)])
+def test_revision_skipped_when_valid_or_budget_exhausted(monkeypatch, valid, elapsed):
+    _, client = mock_client(monkeypatch, {'explanations': [{'id': 'A', 'text': GOOD_TWO if valid else BAD_THREE}]})
+    monkeypatch.setenv('LLM_TIMEOUT_S', '8')
+    monkeypatch.setattr(explain, 'monotonic', MagicMock(side_effect=[100, 100 + elapsed]))
+    cards = [revision_card()]
+    assert explain.apply_explanations(QUERY, cards) == ('llm' if valid else 'template')
+    assert cards[0]['explanation_attempts'] == 1
+    client.chat.completions.create.assert_called_once()
+    if not valid:
+        assert cards[0]['fallback_reason'] == 'Больше двух предложений'
+
+
+def test_revision_similarity_includes_later_accepted_card(monkeypatch):
+    _, client = mock_client(monkeypatch, {})
+    client.chat.completions.create.side_effect = [
+        api_reply([{'id': 'A', 'text': BAD_THREE}, {'id': 'B', 'text': GOOD_TWO}]),
+        api_reply([{'id': 'A', 'text': GOOD_TWO}])]
+    cards = [revision_card('A'), revision_card('B')]
+    assert explain.apply_explanations(QUERY, cards) == 'mixed'
+    assert cards[0]['fallback_reason'] == 'Объяснение слишком похоже на другую карточку'
+    assert cards[0]['explanation_attempts'] == 2
+    assert cards[1]['explanation_attempts'] == 1
+    assert cards[1]['explanation_source'] == 'llm'
+    payload = json.loads(client.chat.completions.create.call_args.kwargs['messages'][1]['content'])
+    assert [card['id'] for card in payload['cards']] == ['A']
+
+
+@pytest.mark.parametrize('payload', [None, {}, {'explanations': []},
+    {'explanations': [{'id': 'B', 'text': GOOD_TWO}]},
+    {'explanations': [{'id': 'A', 'text': 123}]},
+    {'explanations': [{'id': 'A', 'text': GOOD_TWO, 'extra': True}]}])
+def test_revision_strict_schema(monkeypatch, payload):
+    _, client = mock_client(monkeypatch, payload)
+    assert llm.revise_explanations(QUERY, [revision_card()],
+        [{'id': 'A', 'text': BAD_THREE, 'reason': 'Больше двух предложений'}], 2) is None
+    client.chat.completions.create.assert_called_once()

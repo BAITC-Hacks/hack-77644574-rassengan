@@ -6,8 +6,9 @@ import math
 import os
 import re
 from threading import Lock
+from time import monotonic
 
-from app.llm import explain_cards, _description_for_event
+from app.llm import explain_cards, revise_explanations, _description_for_event
 from app.explain_check import normalized, validate
 from app.snippets import short_clause, clauses
 
@@ -97,33 +98,72 @@ def template_explanation(card: dict, cards=None) -> str:
     return lead + ". " + tail + "."
 
 
-def apply_explanations(request, cards):
-    if not cards:
-        return "template"
-    # Include facts as well as ids to avoid stale text if the catalogue changes.
-    key = hashlib.sha256(json.dumps([request, [(c["id"], c["matched_facts"]) for c in cards]],
-                                    ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-    with _CACHE_LOCK:
-        if key not in _CACHE:
-            try:
-                timeout = float(os.getenv("LLM_TIMEOUT_S", "8"))
-                if not math.isfinite(timeout) or timeout <= 0:
-                    timeout = 8
-                output = explain_cards(request, cards, timeout)
-            except Exception as exc:
-                logging.getLogger(__name__).warning("Explainer unavailable (%s)", type(exc).__name__)
-                output = None
-            _CACHE[key] = output
-        output = _CACHE[key]
-    previous = []
+def _generate_verified(request, cards):
+    try:
+        timeout = float(os.getenv("LLM_TIMEOUT_S", "8"))
+    except ValueError:
+        timeout = 8
+    if not math.isfinite(timeout) or timeout <= 0:
+        timeout = 8
+    deadline = monotonic() + timeout
+    try:
+        output = explain_cards(request, cards, timeout)
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Explainer unavailable (%s)", type(exc).__name__)
+        output = None
+    results, rejected, previous = {}, [], []
     for card in cards:
         text = output.get(card["id"]) if isinstance(output, dict) else None
         ok, reason = validate(text, dict(card, request=request), previous) if text is not None else (
             False, "AI недоступен или не вернул объяснение: проверьте настройки и журнал")
-        card["explanation"] = text if ok else template_explanation(card, cards)
-        card["explanation_source"] = "llm" if ok else "template"
+        result = {"explanation": text if ok else template_explanation(card, cards),
+                  "explanation_source": "llm" if ok else "template", "explanation_attempts": 1}
         if not ok:
-            card["fallback_reason"] = reason
-        previous.append(card["explanation"])
+            result["fallback_reason"] = reason
+            if isinstance(text, str):
+                rejected.append({"id": card["id"], "text": text, "reason": reason})
+        results[card["id"]] = result
+        previous.append(result["explanation"])
+    remaining = deadline - monotonic()
+    if rejected and remaining >= 1.5:
+        try:
+            revised = revise_explanations(request, cards, rejected, remaining)
+        except Exception as exc:
+            logging.getLogger(__name__).warning("Revision unavailable (%s)", type(exc).__name__)
+            revised = None
+        # Reject a late response as well; never start another attempt.
+        if monotonic() > deadline:
+            revised = None
+        rejected_ids = {row["id"] for row in rejected}
+        for card in cards:
+            if card["id"] not in rejected_ids:
+                continue
+            result = results[card["id"]]
+            result["explanation_attempts"] = 2
+            text = revised.get(card["id"]) if isinstance(revised, dict) else None
+            others = [value["explanation"] for ident, value in results.items() if ident != card["id"]]
+            ok, reason = validate(text, dict(card, request=request), others) if text is not None else (
+                False, "AI не вернул исправленное объяснение: проверьте настройки и журнал")
+            if ok:
+                result.update(explanation=text, explanation_source="llm")
+                result.pop("fallback_reason", None)
+            else:
+                result["fallback_reason"] = reason
+    return results
+
+
+def apply_explanations(request, cards):
+    if not cards:
+        return "template"
+    # Cache only final checked results; do not include prior explanation metadata.
+    inputs = [{k: v for k, v in c.items() if k not in (
+        "explanation", "explanation_source", "explanation_attempts", "fallback_reason")} for c in cards]
+    key = hashlib.sha256(json.dumps([request, inputs], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    with _CACHE_LOCK:
+        if key not in _CACHE:
+            _CACHE[key] = _generate_verified(request, cards)
+        for card in cards:
+            card.pop("fallback_reason", None)
+            card.update(_CACHE[key][card["id"]])
     sources = {c["explanation_source"] for c in cards}
     return next(iter(sources)) if len(sources) == 1 else "mixed"

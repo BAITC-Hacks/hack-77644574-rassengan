@@ -91,7 +91,7 @@ form.addEventListener('submit',async event=>{
  if(data.outcome==='found'&&data.why_fewer_than_3&&data.why_fewer_than_3!==data.message)add(results,'p',data.why_fewer_than_3);
  for(const card of data.cards){const article=add(results,'article','');add(article,'h3',card.name);add(article,'p',card.category+' · '+card.city+' · '+(card.price_unknown?'Цена требует уточнения':'от '+card.price_from_kzt.toLocaleString('ru-RU')+' ₸'));
  const flags=[];if(card.synthetic)flags.push('Синтетический профиль');if(card.city_imputed)flags.push('Город проставлен при подготовке данных');if(card.price_imputed)flags.push('Цена проставлена при подготовке данных');if(flags.length)add(article,'p',flags.join(' · '),'flags');add(article,'p',card.explanation);
- const badge=add(article,'span',card.explanation_source==='llm'?'AI-объяснение':'шаблон','explanation-badge');if(card.fallback_reason)badge.title=card.fallback_reason;
+ const badge=add(article,'span',card.explanation_source==='llm'?(card.explanation_attempts===2?'AI-объяснение (исправлено)':'AI-объяснение'):'шаблон','explanation-badge');if(card.fallback_reason)badge.title=card.fallback_reason;
  const details=add(article,'details','');add(details,'summary','Расчёт оценки: '+card.score);
  for(const [key,points] of Object.entries(card.score_breakdown))add(details,'p',(scoreLabels[key]||key)+': '+points);
  }
