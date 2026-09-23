@@ -1,14 +1,13 @@
-# Fill in the real commands once the stack is chosen.
 .PHONY: setup run test smoke
 
 setup:
-	@echo "TODO: replace with the real install command (e.g. pip install -r requirements.txt)"
+	python3 -m pip install -r requirements.txt
 
 run:
-	@echo "TODO: replace with the real run command (e.g. uvicorn app.main:app --reload)"
+	python3 -m uvicorn app.main:app --port 8000
 
 test:
-	@echo "TODO: replace with the real test command (e.g. pytest -q)"
+	python3 -m pytest -q
 
 smoke:
 	python scripts/smoke.py
