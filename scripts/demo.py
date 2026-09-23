@@ -15,6 +15,18 @@ from app.explain_check import BANNED, normalized, sentence_count
 from app.matching import match
 
 
+def _marks():
+    """Emoji marks where the console can print them; plain text otherwise (e.g. Windows CP1251)."""
+    try:
+        "✅❌".encode(sys.stdout.encoding or "ascii")
+        return "✅ ", "❌ "
+    except (UnicodeEncodeError, LookupError):
+        return "[OK] ", "[FAIL] "
+
+
+OK, FAIL = _marks()
+
+
 def main():
     # Override even inherited credentials; never load .env in the offline demo.
     os.environ["OPENAI_API_KEY"] = ""
@@ -26,7 +38,7 @@ def main():
 
     def check(label, ok, expected, actual):
         checks.append(bool(ok))
-        print(("✅ " if ok else "❌ ") + label + (
+        print((OK if ok else FAIL) + label + (
             "" if ok else " (ожидалось {}, получено {})".format(expected, actual)))
 
     def run(label, **changes):
