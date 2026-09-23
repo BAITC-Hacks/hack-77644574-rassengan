@@ -1,6 +1,7 @@
 """Conservative lexical checks, not a claim of semantic verification."""
 import json
 import re
+from datetime import date
 from decimal import Decimal
 from difflib import SequenceMatcher
 
@@ -26,6 +27,8 @@ def sentence_count(text):
 def validate(text, card, other_texts):
     if not isinstance(text, str) or not text.strip():
         return False, "Пустое объяснение"
+    if re.search(r"HK-\d+", text, re.I):
+        return False, "Упомянут внутренний идентификатор"
     if len(text) > 400:
         return False, "Объяснение длиннее 400 символов"
     if sentence_count(text) > 2:
@@ -35,6 +38,14 @@ def validate(text, card, other_texts):
         return False, "Общая рекламная фраза"
     facts = card.get("matched_facts", [])
     allowed = numbers(json.dumps({"facts": facts, "request": card.get("request", {})}, ensure_ascii=False))
+    try:
+        requested_date = date.fromisoformat(card.get("request", {}).get("date", ""))
+    except (TypeError, ValueError):
+        pass
+    else:
+        for form in (requested_date.isoformat(), requested_date.strftime("%d.%m.%Y"),
+                     requested_date.strftime("%d.%m")):
+            allowed.update(numbers(form))
     if numbers(text) - allowed:
         return False, "Число не подтверждено фактами"
     concrete = False

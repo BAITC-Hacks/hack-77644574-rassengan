@@ -1,13 +1,19 @@
 .PHONY: setup run test smoke
 
+PYTHON ?= python3
+VENV := .venv
+PY := $(VENV)/bin/python
+
 setup:
-	python3 -m pip install -r requirements.txt
+	$(PYTHON) -m venv $(VENV)
+	$(PY) -m pip install --upgrade pip
+	$(PY) -m pip install -r requirements.txt
 
 run:
-	python3 -m uvicorn app.main:app --port 8000
+	$(PY) -m uvicorn app.main:app --port 8000
 
 test:
-	python3 -m pytest -q
+	$(PY) -m pytest -q
 
 smoke:
-	python scripts/smoke.py
+	$(PY) scripts/smoke.py

@@ -1,5 +1,6 @@
 import json
 import re
+from copy import deepcopy
 from itertools import combinations
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -63,6 +64,29 @@ def test_rejected_output(profiles, monkeypatch, bad, reason):
     assert reason in card["fallback_reason"]
 
 
+@pytest.mark.parametrize("identifier", ["HK-90001", "HK-12345", "hk-90001"])
+def test_validator_rejects_internal_ids(identifier):
+    card = {"matched_facts": [{"kind": "price", "text": "цена от 90001 тенге"}]}
+    assert validate(f"У {identifier} цена от 90001 тенге.", card, []) == (
+        False, "Упомянут внутренний идентификатор")
+
+
+def test_mocked_llm_internal_id_falls_back(profiles, monkeypatch):
+    cards = match(QUERY, profiles)["cards"]
+    explain._CACHE.clear()
+    _, client = mock_client(monkeypatch, {"explanations": [
+        {"id": c["id"], "text": "У HK-90001 в описании есть опыт ведения свадеб."}
+        for c in cards]})
+    result = match(QUERY, profiles)
+    client.chat.completions.create.assert_called_once()
+    assert result["explainer"] == "template"
+    for card in result["cards"]:
+        assert card["explanation_source"] == "template"
+        assert card["fallback_reason"] == "Упомянут внутренний идентификатор"
+        assert card["explanation"] == explain.template_explanation(card, result["cards"])
+        assert "HK-90001" not in card["explanation"]
+
+
 def test_identical_text_second_falls_back(profiles, monkeypatch):
     batch_stub(monkeypatch, lambda text, i: "Принимает формат «свадьба».")
     cards = match(QUERY, profiles)["cards"]
@@ -121,7 +145,27 @@ def test_batch_api_contract(monkeypatch):
     assert params["temperature"] == 0
     assert params["response_format"] == {"type": "json_object"}
     assert json.loads(params["messages"][1]["content"])["cards"][0]["id"] == "A"
+    assert json.loads(params["messages"][1]["content"])["shared_facts"] == []
     client.chat.completions.create.assert_called_once()
+
+
+@pytest.mark.parametrize("same_price", [True, False])
+def test_payload_shared_facts_are_common_to_every_card(monkeypatch, same_price):
+    availability = {"kind": "availability", "text": "по календарю свободен на 2026-10-15"}
+    event_format = {"kind": "format", "text": "принимает формат «свадьба»"}
+    price = {"kind": "price", "text": "цена от 900 000 ₸ при бюджете 1 000 000 ₸"}
+    cards = [{"id": ident, "matched_facts": [availability, event_format, price,
+              {"kind": "description", "text": detail}]}
+             for ident, detail in (("A", "Проводы невесты"), ("B", "Опыт 13 лет"), ("C", "Опыт 12 лет"))]
+    if not same_price:
+        cards[2]["matched_facts"][2] = dict(price, text="цена от 1 000 000 ₸ при бюджете 1 000 000 ₸")
+    _, client = mock_client(monkeypatch, {"explanations": [
+        {"id": c["id"], "text": "Текст"} for c in cards]})
+    assert llm.explain_cards(QUERY, cards, 1.5) is not None
+    payload = json.loads(client.chat.completions.create.call_args.kwargs["messages"][1]["content"])
+    assert payload["shared_facts"] == [availability, event_format] + ([price] if same_price else [])
+    assert payload["request"] == QUERY
+    assert payload["cards"] == [{"id": c["id"], "facts": c["matched_facts"]} for c in cards]
 
 
 @pytest.mark.parametrize("payload", [None, [], {}, {"explanations": "bad"},
@@ -168,6 +212,44 @@ def test_validator(text, ok):
         {"kind": "description", "text": "из описания: «Акустическая программа»"},
     ]}
     assert validate(text, card, [])[0] is ok
+
+
+@pytest.mark.parametrize("day, ok", [
+    ("2026-10-15", True), ("15.10.2026", True), ("15.10", True),
+    ("16.10.2026", False), ("15.10.2027", False),
+])
+def test_validator_request_date_formats(day, ok):
+    card = {"request": QUERY, "matched_facts": [
+        {"kind": "availability", "text": "по календарю свободен на 2026-10-15"},
+        {"kind": "format", "text": "принимает формат «свадьба»"},
+    ]}
+    assert validate(f"Свободен на {day}, принимает формат «свадьба».", card, [])[0] is ok
+    assert not validate(f"Свободен на {day}, свадьба за 987654321 тенге.", card, [])[0]
+
+
+@pytest.mark.parametrize("event, description, expected", [
+    ("свадьба", "Ведёт все форматы: свадьбы, проводы невесты, обряд первых шагов, поминальный обед",
+     "из описания: «Ведёт все форматы: свадьбы … проводы невесты»"),
+    ("корпоратив", "Ведёт свадьбы, корпоративы и поминальные обеды",
+     "из описания: «корпоративы»"),
+    ("свадьба", "Опыт ведущего более 12 лет", "из описания: «Опыт ведущего более 12 лет»"),
+    ("свадьба", "Поминальный обед", None),
+    ("свадьба", "Не ведёт свадьбы, проводит корпоративы", "из описания: «Не ведёт свадьбы»"),
+])
+def test_llm_payload_trims_descriptions_without_mutating_cards(monkeypatch, event, description, expected):
+    price = {"kind": "price", "text": "цена от 900 000 ₸ при бюджете 1 000 000 ₸"}
+    cards = [{"id": ident, "matched_facts": [price,
+              {"kind": "description", "text": "из описания: «" + description + "»"}]}
+             for ident in ("A", "B")]
+    original = deepcopy(cards)
+    _, client = mock_client(monkeypatch, {"explanations": [
+        {"id": c["id"], "text": "Текст"} for c in cards]})
+    assert llm.explain_cards(dict(QUERY, event_type=event), cards, 1.5) is not None
+    payload = json.loads(client.chat.completions.create.call_args.kwargs["messages"][1]["content"])
+    expected_facts = [price] + ([{"kind": "description", "text": expected}] if expected else [])
+    assert all(c["facts"] == expected_facts for c in payload["cards"])
+    assert payload["shared_facts"] == expected_facts
+    assert cards == original
 
 
 def test_template_quotes_short_grounded_and_word_complete(profiles):

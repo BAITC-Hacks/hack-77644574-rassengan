@@ -1,74 +1,147 @@
-# hack-77644574-rassengan
-Hackathon team repository for rassengan
+# Умный подбор подрядчиков: explainable contractor matching
 
-> {Project name}: {one-line description}
+> Команда **rassengan** · HackAlem AI, 23.09.2026 · трек «Креативные индустрии» · кейс «Умный подбор подрядчиков (#79-lite)»
 
-> Team: {names}. Task: {task}. Built at HackAlem AI, 23 Sep 2026.
+## Что делает решение (What it does)
+Заказчик мероприятия уже выбрал город и тип события и получил каталог подрядчиков. Сервис **помогает выбрать из этого каталога, а не удлиняет список**: по параметрам заказа он возвращает **до 3 карточек подрядчиков**, и у каждой есть конкретное объяснение, почему этот подрядчик здесь.
 
-## What it does
-{The task, the main scenario, who it helps.}
+- **Вход:** город, дата, тип мероприятия, категория подрядчика, бюджет (₸); опционально длительность (ч) и язык.
+- **Выход:** до 3 карточек (имя, категория, город, цена «от», объяснение в 1–2 предложения) и один из трёх явных исходов:
+  1. **подобрали** N подрядчиков;
+  2. **в этом городе такой категории нет** (и в каких городах она есть);
+  3. **кандидаты есть, но ни один не проходит по условиям**, с разбивкой причин: заняты на дату, не тянут бюджет, не берут этот формат.
+- Если подходящих меньше трёх, сервис говорит, **сколько** их и **почему** меньше.
+- Занятый на выбранную дату подрядчик никогда не попадает в выдачу. Площадки ищутся так же, как люди: у них тот же календарь.
+- **Детерминизм:** тот же запрос даёт тот же порядок карточек.
 
-## Template explanations
-Without an available LLM response, explanations are deterministic: the first sentence
-selects a distinguishing fact among the returned cards (price, event mention, requested
-language/hours, or a description detail). The second quotes up to 90 characters at a
-word boundary and compares the starting price with the budget. Tied or unknown prices
-are not described as uniquely cheapest; identical profiles cannot yield a factual distinction.
+Полное ТЗ кейса (дословно): [`docs/CASE_SPEC_RU.md`](docs/CASE_SPEC_RU.md). Разбор условий и Definition of Done: [`docs/TASK.md`](docs/TASK.md).
 
-## Architecture
-{Components and data flow (a small diagram helps). Which model does what and why.}
-
-## Tech and data
-- Stack: {language, framework}
-- Providers and models: {Claude / NVIDIA / OpenAI, model IDs}
-- Built with OpenAI Codex {and Claude Code}
-- Data: {sources}
-
-## Prior code and sources
-- **Prepared kit** (added on the competition day, setup only, no project code): agent instructions, skills, templates, rule-check scripts and `scripts/smoke.py`. Full list and purpose in `KIT.md`:
-  - `AGENTS.md`, `CLAUDE.md`
-  - `docs/RUBRIC.md`, `docs/TASK.md`, `docs/PLAN.md`, `docs/WORKFLOW.md`, `docs/COMMANDS.md`
-  - `.claude/skills/*`
-  - `.claude/settings.json`
-  - `README.md`, `.env.example`, `.gitignore`, `Makefile`
-  - `scripts/smoke.py`
-  - `scripts/push-advice.sh`
-  - `docs/HACKATHON_RULES.md`, `.hackathon-rules.conf`
-  - `scripts/rules-check.sh`, `scripts/install-hooks.sh`, `scripts/hooks/*`
-  - `.vscode/*`
-- {other libraries, models, datasets, templates and their licenses}
-
-## System requirements
-- OS: {macOS / Linux / Windows}; {Python 3.x / Node x / Docker}; {RAM, GPU if any}
-
-## Dependencies
-- Listed in {requirements.txt / package.json / pyproject.toml}, versions pinned. Installed by `make setup`.
-
-## Install and run
-```bash
-git clone {repo url} && cd {repo}
-cp .env.example .env   # then fill in the values (see Configuration)
-make setup             # installs dependencies
-make run
+## Архитектура (Architecture)
+```
+ браузер (web/index.html)
+      │  POST /match {city, date, event_type, category, budget_kzt, hours?, language?}
+      ▼
+ FastAPI (app/main.py) ── каталог загружается один раз при старте (app/data.py, CSV)
+      │
+      ▼
+ app/matching.py: детерминированное ядро
+   1. кандидаты = город + категория           → нет? исход «в городе нет такой категории»
+   2. жёсткие фильтры по порядку, с подсчётом причины отказа:
+      занят на дату → не берёт формат → цена выше бюджета → мало часов → нет языка
+                                               → никто не прошёл? исход «кандидаты есть, но…»
+   3. аддитивный скор с разбивкой по компонентам, сортировка (-score, id)
+   4. топ-3 + trace по каждому кандидату (прошёл / отклонён и почему)
+      │
+      ▼
+ app/explain.py: объяснения
+   ├─ app/llm.py: ОДИН вызов OpenAI на весь ответ (все 3 карточки сразу), только факты карточек
+   ├─ app/explain_check.py: проверка каждого текста: ≤2 предложений, без общих фраз,
+   │   без чисел, которых нет в фактах, есть конкретный факт, не похоже на соседнюю карточку
+   └─ шаблон: детерминированное объяснение из фактов, если нет ключа, ошибка/таймаут или текст не прошёл проверку
 ```
 
-## Access for judges (no personal accounts needed)
-{Demo / test credentials, or how to run in mock/offline mode without any personal account or subscription.}
+**Почему так.** Порядок карточек, фильтры и исходы считаются обычным кодом, поэтому они проверяемы, повторяемы и не зависят от LLM. LLM отвечает только за то, в чём он силён: превратить факты конкретной карточки в короткое человеческое объяснение. Проверщик не пропускает выдуманные числа и рекламные фразы. Без ключа сервис работает полностью на шаблонах.
 
-## Configuration
-| Variable | Purpose | Example |
+### Как считается скор (`app/matching.py`)
+| Компонент | Баллы |
+|---|---|
+| В описании упоминается запрошенный тип мероприятия (основы слов и синонимы) | 40 |
+| Совпадение слов категории с описанием | до 20 |
+| Язык: запрошенный язык поддерживается (10) · без запроса языка: 2+ языков (2) | 10 / 2 |
+| Запас по часам относительно запрошенной длительности | до 5 |
+| Цена относительно бюджета (дешевле = немного лучше); неизвестная цена: −2 | до 5 |
+| Качество данных: −1 за каждый флаг `price_imputed`, `city_imputed`, `synthetic` | −1…−3 |
+
+Разбивка скора видна в карточке (блок «Расчёт оценки»), trace всех кандидатов — в блоке «Проверка всех кандидатов»; то же есть в ответе API (`score_breakdown`, `trace`).
+
+## Технологии и данные (Tech and data)
+- **Python 3.9+**, FastAPI, Uvicorn, Pydantic, pytest. Интерфейс: одна статическая HTML-страница без сборки.
+- **LLM:** OpenAI Chat Completions (`openai` SDK), модель задаётся через `OPENAI_MODEL`. Проверено с `gpt-5.4-mini`.
+- **Данные:** официальный анонимизированный каталог кейса, `data/hackathon-dataset-anonymized.csv` (66 профилей), и HTML-превью. Описание полей: [`data/README.md`](data/README.md). Собственные профили в каталог не добавлялись. Тестовые синтетические профили лежат отдельно в `tests/fixtures/`.
+
+## Системные требования (System requirements)
+- macOS или Linux (на Windows: WSL или команды вручную, см. ниже).
+- Python **3.9 или новее**, `make`, доступ к PyPI для установки зависимостей.
+- Около 200 МБ диска для виртуального окружения. GPU не нужен.
+- Для объяснений от LLM нужен интернет и ключ OpenAI. Без них всё работает на шаблонах.
+
+## Зависимости (Dependencies)
+Закреплены в [`requirements.txt`](requirements.txt): `fastapi`, `uvicorn`, `pydantic`, `python-dotenv`, `openai`, `pytest`, `httpx`. `make setup` ставит их в локальное окружение `.venv`, а не в системный Python.
+
+## Установка и запуск (Install and run)
+```bash
+git clone https://github.com/BAITC-Hacks/hack-77644574-rassengan.git
+cd hack-77644574-rassengan
+make setup              # создаёт .venv и ставит зависимости
+cp .env.example .env    # необязательно: ключ OpenAI для LLM-объяснений (см. «Конфигурация»)
+make run                # http://localhost:8000
+```
+Откройте **http://localhost:8000** в браузере.
+
+Без `make` (например, на Windows):
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt      # Windows: .venv\Scripts\python
+.venv/bin/python -m uvicorn app.main:app --port 8000
+```
+
+## Доступ для проверяющих: личные аккаунты не нужны (Access for judges)
+Регистрации и логина нет. **Без ключа OpenAI** сервис полностью работоспособен: все фильтры, ранжирование, исходы и объяснения работают, объяснения строятся детерминированным шаблоном из фактов карточки (на карточке пометка «шаблон»). Чтобы увидеть LLM-объяснения (пометка «AI-объяснение»), достаточно подставить любой ключ OpenAI в `.env`.
+
+## Конфигурация: переменные окружения (Configuration, environment variables)
+| Переменная | Назначение | Пример |
 |---|---|---|
-| ANTHROPIC_API_KEY | | |
+| `OPENAI_API_KEY` | Ключ OpenAI для LLM-объяснений. Пусто: шаблонные объяснения | `sk-...` |
+| `OPENAI_MODEL` | Модель OpenAI. Пусто: шаблонные объяснения | `gpt-5.4-mini` |
+| `LLM_TIMEOUT_S` | Таймаут вызова LLM в секундах; при превышении используется шаблон | `8` |
+| `DATA_PATH` | Необязательно: путь к каталогу (CSV или JSONL) | `data/hackathon-dataset-anonymized.csv` |
 
-## Verify the main scenario
-1. {step}
-2. Expected: {result}
+## Проверка основного сценария (Verify the main scenario)
+Запустите `make run`, откройте http://localhost:8000 и выполните запросы ниже. Можно также через API:
+```bash
+curl -s -X POST localhost:8000/match -H 'Content-Type: application/json' \
+  -d '{"city":"Алматы","date":"2026-10-15","event_type":"свадьба","category":"Ведущий","budget_kzt":1000000}'
+```
 
-## Team and contributions
-- {name} (GitHub {handle}): {what they built}
+| # | Запрос | Ожидаемый результат |
+|---|---|---|
+| 1 | **Плотная категория:** Алматы · 15.10.2026 · свадьба · Ведущий · 1 000 000 ₸ | «Подобрали 3 подрядчиков»: Кики, Эмилия, Сон Гоку. У каждой карточки своё объяснение |
+| 2 | **Та же, другая дата:** то же, но 16.10.2026 | Другая выдача: Хаул, Мицури Канроджи. В блоке «Проверка всех кандидатов» у Кики, Эмилии и Сон Гоку: «занят на 16.10.2026» |
+| 3 | **Редкая категория:** Алматы · 15.10.2026 · свадьба · Флорист · 500 000 ₸ | 2 карточки и объяснение, почему меньше трёх: в городе всего 2 флориста |
+| 4 | **Нет категории в городе:** Астана · 15.10.2026 · свадьба · Декоратор · 1 000 000 ₸ | «В городе Астана нет подрядчиков категории Декоратор. Эта категория есть в городах: Алматы.» |
+| 5 | **Кандидаты есть, никто не проходит:** Алматы · 15.10.2026 · свадьба · Декоратор · 1 000 000 ₸ | «Кандидаты есть (3), но ни один не проходит по условиям: 3 с ценой выше бюджета.» |
 
-## Tests
-`make test`
+Повторите любой запрос: порядок карточек тот же (детерминизм). Ответ приходит за несколько секунд с LLM и мгновенно на шаблонах.
 
-## Known limitations
-- {honest list}
+## Тесты (Tests)
+```bash
+make test
+```
+77 офлайн-тестов (реальные вызовы API в тестах заблокированы, см. `tests/conftest.py`):
+- `tests/test_dod.py`: Definition of Done кейса на реальном каталоге: детерминизм, разная выдача на двух датах из-за занятости, плотная/редкая/пустая категория, словесное объяснение пустого результата, скорость;
+- `tests/test_matching.py`: фильтры, причины отказа, три исхода, «почему меньше трёх»;
+- `tests/test_explain.py`: LLM-объяснения через заглушку: принятие хорошего ответа; откат на шаблон при общих фразах, выдуманных числах, похожих текстах, ошибке или таймауте;
+- `tests/test_api.py`, `tests/test_dataset.py`: API и загрузка каталога.
+
+## Использование AI-инструментов (AI tools used)
+Разработка велась с AI-агентами. Все изменения проверены командой и зафиксированы в истории коммитов под аккаунтами участников.
+- **OpenAI Codex** (CLI): основной исполнитель кода: каркас, фильтры и ранжирование, trace, LLM-объяснитель с проверкой, тесты. Коммиты помечены «built with Codex».
+- **Claude Code**: планирование, разбор ТЗ, ревью изменений, проверка на реальных данных, README.
+- **В самом продукте:** OpenAI (`OPENAI_MODEL`) пишет объяснения карточек только из переданных фактов, с проверкой и детерминированным откатом.
+
+## Заимствованный код и источники (Prior code and sources)
+- **Подготовленный набор (kit)**: добавлен в день соревнования, только настройка, без кода проекта: инструкции для агентов, навыки, шаблоны, скрипты проверки правил. Полный список и назначение в [`KIT.md`](KIT.md): `AGENTS.md`, `CLAUDE.md`, `docs/HACKATHON_RULES.md`, `docs/RUBRIC.md`, `docs/TASK.md`, `docs/PLAN.md`, `docs/WORKFLOW.md`, `docs/COMMANDS.md`, `.claude/*`, `.vscode/*`, `scripts/*`, `.hackathon-rules.conf`, шаблоны `README.md`, `.env.example`, `.gitignore`, `Makefile`.
+- **Данные:** официальный каталог кейса (`data/`), предоставлен организаторами для хакатона.
+- **Библиотеки** (открытый код, см. `requirements.txt`): FastAPI (MIT), Uvicorn (BSD-3), Pydantic (MIT), python-dotenv (BSD-3), openai-python (Apache-2.0), pytest (MIT), HTTPX (BSD-3).
+- Весь код в `app/`, `web/`, `tests/` написан во время соревнования 23.09.2026 после 13:00.
+
+## Команда (Team)
+- **Askhat** (GitHub: {your handle}): тимлид и основной разработчик: архитектура, ядро подбора, объяснения, интеграция AI-агентов.
+- **{teammate name}** (GitHub: {handle}): {what they built}
+
+## Известные ограничения (Known limitations)
+- LLM-объяснения требуют ключ OpenAI и интернет. Без них используются шаблонные объяснения; они корректны и различимы, но звучат суше.
+- Проверка LLM-текстов лексическая (числа, запрещённые фразы, похожесть), а не полная семантическая. Сомнительный текст заменяется шаблоном.
+- Совпадение «по смыслу описания» определяется по основам слов и синонимам типа мероприятия, без эмбеддингов.
+- Каталог маленький (66 профилей; в Астане 15). Для многих сочетаний честный ответ: «меньше трёх» или «никто не подходит».
+- Бронирование, заявки и уведомления подрядчикам не входят в задачу (по ТЗ).
