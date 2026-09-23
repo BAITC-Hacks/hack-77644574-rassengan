@@ -17,3 +17,11 @@ test:
 
 smoke:
 	$(PY) scripts/smoke.py
+
+.PHONY: demo eval
+
+demo:
+	$(PY) scripts/demo.py
+
+eval:
+	$(PY) scripts/eval.py
