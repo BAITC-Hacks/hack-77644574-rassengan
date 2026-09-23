@@ -14,7 +14,10 @@ OPTIONS = dict(cities=['Алматы'], categories=['Ведущий'], event_for
 GOOD = dict(city='Алматы', date='2026-11-14', event_type='той', category='Ведущий',
             budget_kzt=500000, hours=None, language='казахский', missing=[])
 TEXT = 'Нужен ведущий на казахском на той 14 ноября в Алматы, бюджет до 500 тысяч'
-ERROR = 'Разбор текста доступен только с ключом OpenAI; заполните форму'
+ERROR = ('Не удалось разобрать текст: AI не ответил вовремя или вернул некорректный ответ; '
+         'заполните форму вручную')
+NO_KEY_ERROR = ('Разбор текста доступен только с ключом OpenAI и моделью (OPENAI_API_KEY, OPENAI_MODEL); '
+                'заполните форму')
 CALENDAR_MESSAGE = 'Календарь занятости покрывает только 23.09.2026–31.12.2026; выберите дату в этом диапазоне.'
 
 
@@ -117,7 +120,7 @@ def test_malformed_llm_output_rejected(client, monkeypatch, payload):
 def test_missing_configuration(client, monkeypatch, missing):
     constructor, _ = mock_llm(monkeypatch, GOOD)
     monkeypatch.delenv(missing)
-    assert client.post('/parse', json={'text': TEXT}).json() == dict(fields=None, missing=[], error=ERROR)
+    assert client.post('/parse', json={'text': TEXT}).json() == dict(fields=None, missing=[], error=NO_KEY_ERROR)
     constructor.assert_not_called()
 
 

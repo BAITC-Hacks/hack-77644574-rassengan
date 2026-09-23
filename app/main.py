@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -32,8 +33,12 @@ class ParseRequest(BaseModel):
 def parse_order(request: ParseRequest):
     parsed = parse_request(request.text, dataset_options(app.state.profiles), timeout_s=8)
     if parsed is None:
-        return {"fields": None, "missing": [],
-                "error": "Разбор текста доступен только с ключом OpenAI; заполните форму"}
+        configured = all(os.getenv(name, "").strip() for name in ("OPENAI_API_KEY", "OPENAI_MODEL"))
+        error = ("Не удалось разобрать текст: AI не ответил вовремя или вернул некорректный ответ; "
+                 "заполните форму вручную" if configured else
+                 "Разбор текста доступен только с ключом OpenAI и моделью (OPENAI_API_KEY, OPENAI_MODEL); "
+                 "заполните форму")
+        return {"fields": None, "missing": [], "error": error}
     return {"fields": {key: value for key, value in parsed.items() if key != "missing"},
             "missing": parsed["missing"], "source": "llm"}
 
