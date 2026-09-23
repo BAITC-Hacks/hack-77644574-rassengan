@@ -233,6 +233,7 @@ def match(request, profiles: List[Contractor]) -> dict:
         cards.append(card)
         trace["score"] = card["score"]
     cards.sort(key=lambda card: (-card["score"], card["id"]))
+    _add_distinct_facts(cards[:3], {p.id: p for p in candidates})
     result["explainer"] = apply_explanations(req.model_dump(), cards[:3])
     rejected = ", ".join(str(counts[key]) + " " + _reason_text(key, req, counts[key])
                          for key in REASONS if counts[key])
@@ -246,3 +247,41 @@ def match(request, profiles: List[Contractor]) -> dict:
             noun = "профиль" if len(candidates) == 1 else "профиля"
             result["why_fewer_than_3"] += " В городе " + req.city + " в категории «" + req.category + "» всего " + str(len(candidates)) + " " + noun + "."
     return result
+
+
+def _norm_text(text):
+    return " ".join(text.casefold().replace("ё", "е").split())
+
+
+def _add_distinct_facts(top, by_id):
+    """DoD2: give each shown card a clause of its own full description that the other shown cards lack.
+
+    Uses only catalogue text (no invented differences). Brand names and praise do not count as a
+    difference; clauses with numbers or several concrete words are preferred.
+    """
+    if len(top) < 2:
+        return
+    def core(text):
+        text = re.sub(r"«[^»]*»|[A-Za-z][A-Za-z'’\-]*|[^\w\s-]", " ", text)
+        return _norm_text(text)
+    praise = re.compile(r"идеальн|незабываем|отличн|лучш|профессионал|уникальн|любовь|\bменя зовут\b", re.I)
+    descriptions = {card["id"]: by_id[card["id"]].description or "" for card in top}
+    for card in top:
+        others = " ".join(core(descriptions[c["id"]]) for c in top if c is not card)
+        best, best_score = None, -1
+        for part in clauses(descriptions[card["id"]]):
+            words = core(part).split()
+            has_digit = bool(re.search(r"\d", part))
+            if praise.search(part) or not words or core(part) in others:
+                continue
+            if len(words) < 3 and not has_digit:
+                continue
+            score = (2 if has_digit else 0) + min(len(words), 8) / 8
+            if score > best_score:
+                best, best_score = part, score
+        if best:
+            best = " ".join(re.sub(r"[^\w\s«»,.:;!?()\-–—]", " ", best).split())
+            quote = best[:120]
+            if len(best) > 120 and " " in quote:
+                quote = quote.rsplit(" ", 1)[0]
+            card["matched_facts"].append({"kind": "distinct", "text": "отличие в описании: «" + quote + "»"})

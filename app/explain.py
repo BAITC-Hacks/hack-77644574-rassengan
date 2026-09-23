@@ -69,15 +69,22 @@ def _distinguishing_fact(card, others):
         if (len(clause.split()) >= 2 and _short_quote(clause) and card.get("name", "") not in clause
                 and all(normalized(clause) not in normalized(_description(c)) for c in others)):
             return "В описании отдельно отмечено: «" + _short_quote(clause) + "»"
+    distinct = re.search(r"«(.*)»", facts.get("distinct", ""))
+    if distinct:
+        return "Отличие от других вариантов в описании: «" + distinct.group(1) + "»"
     # Identical or missing descriptions cannot justify an invented distinction.
     if "language" in facts:
         return "У подрядчика " + facts["language"].replace("; ", ", ")
     return "Подрядчик " + facts.get("hours", facts["format"]).replace("; ", ", ")
 
 
-def template_explanation(card: dict, cards=None) -> str:
+def template_explanation(card: dict, cards=None, force_distinct=False) -> str:
     others = [c for c in (cards or []) if c["id"] != card["id"]]
-    lead = _distinguishing_fact(card, others)
+    distinct = re.search(r"«(.*)»", _facts(card).get("distinct", ""))
+    if force_distinct and distinct:
+        lead = "Отличие от других вариантов в описании: «" + distinct.group(1) + "»"
+    else:
+        lead = _distinguishing_fact(card, others)
     description = _description(card)
     # Quote the factual experience clause instead of preceding marketing praise.
     experience = re.search(r"опыт\w* (?:более )?\d+ (?:лет|год\w*)", description, re.I)
@@ -149,7 +156,20 @@ def _generate_verified(request, cards):
                 result.pop("fallback_reason", None)
             else:
                 result["fallback_reason"] = reason
+    _dedupe_templates(cards, results)
     return results
+
+
+def _dedupe_templates(cards, results):
+    """DoD2 safeguard: template texts of one response must differ even with names removed."""
+    seen = {}
+    for card in cards:
+        result = results[card["id"]]
+        key = normalized(result["explanation"].replace(card.get("name", ""), ""))
+        if key in seen and result["explanation_source"] == "template":
+            result["explanation"] = template_explanation(card, cards, force_distinct=True)
+            key = normalized(result["explanation"].replace(card.get("name", ""), ""))
+        seen[key] = card["id"]
 
 
 def apply_explanations(request, cards):

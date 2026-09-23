@@ -74,7 +74,7 @@ def validate(text, card, other_texts):
             concrete |= any(normalized(quote) in value for quote in re.findall("«([^»]+)»", source))
         elif fact["kind"] == "language":
             concrete |= source.split("—")[-1].strip() in value
-        elif fact["kind"] == "description":
+        elif fact["kind"] in ("description", "distinct"):
             words = set(re.findall(r"[а-яa-z]{4,}", source)) - STOP_WORDS
             concrete |= bool(words & set(re.findall(r"[а-яa-z]{4,}", value)))
     if not concrete:
