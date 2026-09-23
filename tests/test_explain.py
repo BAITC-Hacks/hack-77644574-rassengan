@@ -168,7 +168,8 @@ def test_payload_shared_facts_are_common_to_every_card(monkeypatch, same_price):
     assert payload["shared_facts"] == [availability, event_format] + ([price] if same_price else [])
     assert payload["request"] == QUERY
     assert payload["cards"] == [{"id": c["id"], "facts": c["matched_facts"],
-                                  "price_unknown": True, "price_imputed": False} for c in cards]
+                                  "price_unknown": True, "price_imputed": False,
+                                  "score": None, "score_tied": False} for c in cards]
 
 
 @pytest.mark.parametrize("payload", [None, [], {}, {"explanations": "bad"},
@@ -279,12 +280,12 @@ def test_template_quotes_short_grounded_and_word_complete(profiles):
 def test_template_price_comparison_uses_only_returned_cards(profiles):
     cards = match(QUERY, profiles)["cards"]
     # Tied minima and unknown peer prices must not produce a unique cheapest claim.
-    assert all("Самая низкая" not in explain.template_explanation(c, cards) for c in cards)
+    assert all("Начальная цена ниже" not in explain.template_explanation(c, cards) for c in cards)
     cards[0]["price_from_kzt"] = 800000
-    assert explain.template_explanation(cards[0], cards).startswith("Самая низкая")
-    assert "Самая низкая" not in explain.template_explanation(cards[0], [cards[0]])
+    assert explain.template_explanation(cards[0], cards).startswith("Начальная цена ниже")
+    assert "Начальная цена ниже" not in explain.template_explanation(cards[0], [cards[0]])
     cards[1]["price_from_kzt"] = None
-    assert "Самая низкая" not in explain.template_explanation(cards[0], cards)
+    assert "Начальная цена ниже" not in explain.template_explanation(cards[0], cards)
 
 
 def test_template_unique_format_mention(profiles):
@@ -533,3 +534,26 @@ def test_revision_strict_schema(monkeypatch, payload):
     assert llm.revise_explanations(QUERY, [revision_card()],
         [{'id': 'A', 'text': BAD_THREE, 'reason': 'Больше двух предложений'}], 2) is None
     client.chat.completions.create.assert_called_once()
+
+
+TIED_BANDS = [  # real live answer saved by the acceptance review (d7f3ff6): equal scores, order by id only
+    "Подрядчик выделяется самым широким составом и репертуаром с казахскими песнями. Цена от 1 150 000 ₸ при бюджете 4 000 000 ₸.",
+    "Подрядчик идёт следом за более насыщенным составом, в описании 4 вокалиста. Цена от 1 150 000 ₸ при бюджете 4 000 000 ₸.",
+]
+
+
+@pytest.mark.parametrize("text", TIED_BANDS)
+def test_tied_scores_reject_unsupported_comparison(text):
+    card = {"score_tied": True, "request": {"date": "2026-10-15"}, "matched_facts": [
+        {"kind": "price", "text": "цена от 1 150 000 ₸ при бюджете 4 000 000 ₸"},
+        {"kind": "distinct", "text": "отличие в описании: «4 вокалиста»"}]}
+    ok, reason = validate(text, card, [])
+    assert not ok and reason in ("Неподтверждённая превосходная степень", "Сравнение при равной оценке")
+
+
+def test_tied_scores_allow_plain_fit_explanation():
+    card = {"score_tied": True, "request": {"date": "2026-10-15"}, "matched_facts": [
+        {"kind": "price", "text": "цена от 1 150 000 ₸ при бюджете 4 000 000 ₸"},
+        {"kind": "distinct", "text": "отличие в описании: «4 вокалиста»"}]}
+    text = "В составе группы 4 вокалиста, репертуар подходит для корпоратива. Цена от 1 150 000 ₸ при бюджете 4 000 000 ₸."
+    assert validate(text, card, [])[0]

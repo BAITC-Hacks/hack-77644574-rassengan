@@ -234,6 +234,9 @@ def match(request, profiles: List[Contractor]) -> dict:
         trace["score"] = card["score"]
     cards.sort(key=lambda card: (-card["score"], card["id"]))
     _add_distinct_facts(cards[:3], {p.id: p for p in candidates})
+    for card in cards[:3]:
+        # Equal scores: the order is only an id tie-break, so no card may claim an advantage.
+        card["score_tied"] = any(other["score"] == card["score"] for other in cards[:3] if other is not card)
     result["explainer"] = apply_explanations(req.model_dump(), cards[:3])
     rejected = ", ".join(str(counts[key]) + " " + _reason_text(key, req, counts[key])
                          for key in REASONS if counts[key])

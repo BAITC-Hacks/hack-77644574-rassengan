@@ -49,7 +49,7 @@ def _distinguishing_fact(card, others):
     price = card.get("price_from_kzt")
     if others and price is not None and all(
             c.get("price_from_kzt") is not None and price < c["price_from_kzt"] for c in others):
-        return "Самая низкая начальная цена среди показанных вариантов"
+        return "Начальная цена ниже, чем у остальных показанных вариантов"
     if (others and card.get("score_breakdown", {}).get("event_relevance", 0) > 0
             and all(c.get("score_breakdown", {}).get("event_relevance") == 0 for c in others)):
         return "Только в этом описании упоминается запрошенный формат: " + ("«" + _short_quote(reason["snippet"]) + "»" if reason and _short_quote(reason["snippet"]) else facts["format"])

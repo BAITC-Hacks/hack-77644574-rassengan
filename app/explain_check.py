@@ -27,6 +27,12 @@ def sentence_count(text):
 def validate(text, card, other_texts):
     if not isinstance(text, str) or not text.strip():
         return False, "Пустое объяснение"
+    if re.search(r"\b(самы[йме]|самая|самое|самой|наиболее|лучши[йме]|лучшая)\b", text, re.I):
+        return False, "Неподтверждённая превосходная степень"
+    if card.get("score_tied") and re.search(
+            r"\b(более|менее|шире|сильнее|слабее|насыщеннее)\b|выше в списке|ниже в списке|следом|"
+            r"первом месте|втором месте|третьем месте|выше остальных|ниже остальных", text, re.I):
+        return False, "Сравнение при равной оценке"
     if re.search(r"HK-\d+", text, re.I):
         return False, "Упомянут внутренний идентификатор"
     if len(text) > 400:
