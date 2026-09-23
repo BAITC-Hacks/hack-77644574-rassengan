@@ -6,7 +6,15 @@
 <style>
 body{font:16px system-ui;max-width:820px;margin:32px auto;padding:0 20px;color:#18252e}form{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}label{display:grid;gap:5px}input,select,button{font:inherit;padding:10px}button{cursor:pointer}article{border:1px solid #bbc8d0;padding:16px;margin:16px 0;border-radius:8px}.flags{color:#645020}.explanation-badge{font-size:12px;border:1px solid #bbc8d0;border-radius:12px;padding:3px 8px}
 </style>
+<style>
+textarea{font:inherit;padding:10px;resize:vertical}.missing{outline:2px solid #b54708;background:#fff4e5}#parse-form{margin-bottom:24px;display:block}#parse-form button{margin-top:8px}
+</style>
 <h1>Подбор подрядчиков</h1>
+<form id="parse-form">
+<label>Опишите заказ своими словами<textarea id="order-text" rows="3" maxlength="500" required placeholder="Нужен ведущий на казахском на той 15 октября в Алматы, бюджет до 1 миллиона"></textarea></label>
+<button type="submit" id="parse-button" disabled>Разобрать</button>
+<div id="parse-status" aria-live="polite"></div>
+</form>
 <form id="form">
 <label>Город<select name="city" required></select></label>
 <label>Дата<input name="date" type="date" min="2026-09-23" max="2026-12-31" value="2026-10-15" required></label>
@@ -33,10 +41,35 @@ async function loadOptions(){
  for(const [field,value] of Object.entries({city:'Алматы',category:'Ведущий',event_type:'свадьба'})){
  if([...form.elements[field].options].some(option=>option.value===value))form.elements[field].value=value;
  }
- button.disabled=false;
+ button.disabled=false;document.getElementById('parse-button').disabled=false;
  }catch(error){add(results,'p',error.message+' Обновите страницу, чтобы повторить.');}
 }
 loadOptions();
+const fieldLabels={city:'Город',date:'Дата',event_type:'Тип мероприятия',category:'Категория',budget_kzt:'Бюджет',hours:'Длительность',language:'Язык'};
+form.addEventListener('input',event=>{event.target.classList.remove('missing');event.target.removeAttribute('aria-invalid');});
+document.getElementById('parse-form').addEventListener('submit',async event=>{
+ event.preventDefault();
+ const button=document.getElementById('parse-button'),status=document.getElementById('parse-status');
+ const text=document.getElementById('order-text').value.trim();
+ status.replaceChildren();
+ if(!text){add(status,'p','Введите описание заказа.');return;}
+ button.disabled=true;add(status,'p','Разбираем…');
+ try{
+ const response=await fetch('/parse',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+ const data=await response.json();
+ if(!response.ok)throw new Error(response.status===422?'Введите описание от 1 до 500 символов.':'Не удалось разобрать текст.');
+ if(data.error)throw new Error(data.error);
+ for(const field of Object.keys(fieldLabels)){
+ const input=form.elements[field];input.value=data.fields[field]??'';
+ const missing=data.missing.includes(field);input.classList.toggle('missing',missing);
+ if(missing)input.setAttribute('aria-invalid','true');else input.removeAttribute('aria-invalid');
+ }
+ results.replaceChildren();status.replaceChildren();
+ if(data.missing.length)add(status,'p','Уточните: '+data.missing.map(field=>fieldLabels[field]||field).join('; '));
+ add(status,'p','Проверьте поля формы и нажмите «Подобрать».');
+ }catch(error){status.replaceChildren();add(status,'p',error.message||'Ошибка соединения.');}
+ finally{button.disabled=false;}
+});
 const scoreLabels={event_relevance:'Формат в описании',category_relevance:'Категория в описании',language:'Языки',hours_headroom:'Запас часов',value_for_money:'Цена',data_quality:'Качество данных'};
 form.addEventListener('submit',async event=>{
  event.preventDefault();results.replaceChildren();add(results,'p','Подбираем…');form.querySelector('button').disabled=true;
@@ -49,7 +82,7 @@ form.addEventListener('submit',async event=>{
  }
  if(!response.ok)throw new Error('Не удалось выполнить подбор.');
  const data=await response.json();results.replaceChildren();add(results,'h2',data.message);
- if(data.why_fewer_than_3)add(results,'p',data.why_fewer_than_3);
+ if(data.outcome==='found'&&data.why_fewer_than_3&&data.why_fewer_than_3!==data.message)add(results,'p',data.why_fewer_than_3);
  for(const card of data.cards){const article=add(results,'article','');add(article,'h3',card.name);add(article,'p',card.category+' · '+card.city+' · '+(card.price_unknown?'Цена требует уточнения':'от '+card.price_from_kzt.toLocaleString('ru-RU')+' ₸'));
  const flags=[];if(card.synthetic)flags.push('Синтетический профиль');if(card.city_imputed)flags.push('Город проставлен при подготовке данных');if(card.price_imputed)flags.push('Цена проставлена при подготовке данных');if(flags.length)add(article,'p',flags.join(' · '),'flags');add(article,'p',card.explanation);
  const badge=add(article,'span',card.explanation_source==='llm'?'AI-объяснение':'шаблон','explanation-badge');if(card.fallback_reason)badge.title=card.fallback_reason;

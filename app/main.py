@@ -4,9 +4,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.data import load_profiles
 from app.matching import MatchRequest, dataset_options, match
+from app.llm import parse_request
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -19,6 +21,21 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Умный подбор подрядчиков", lifespan=lifespan)
+
+
+class ParseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    text: str = Field(min_length=1, max_length=500, strict=True)
+
+
+@app.post("/parse")
+def parse_order(request: ParseRequest):
+    parsed = parse_request(request.text, dataset_options(app.state.profiles), timeout_s=8)
+    if parsed is None:
+        return {"fields": None, "missing": [],
+                "error": "Разбор текста доступен только с ключом OpenAI; заполните форму"}
+    return {"fields": {key: value for key, value in parsed.items() if key != "missing"},
+            "missing": parsed["missing"], "source": "llm"}
 
 
 @app.get("/health")
