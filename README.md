@@ -8,6 +8,13 @@ Hackathon team repository for rassengan
 ## What it does
 {The task, the main scenario, who it helps.}
 
+## Template explanations
+Without an available LLM response, explanations are deterministic: the first sentence
+selects a distinguishing fact among the returned cards (price, event mention, requested
+language/hours, or a description detail). The second quotes up to 90 characters at a
+word boundary and compares the starting price with the budget. Tied or unknown prices
+are not described as uniquely cheapest; identical profiles cannot yield a factual distinction.
+
 ## Architecture
 {Components and data flow (a small diagram helps). Which model does what and why.}
 

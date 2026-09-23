@@ -7,6 +7,7 @@ import pytest
 
 from app.data import DEFAULT_PATH, load_profiles
 from app.matching import match
+from app.explain_check import sentence_count, validate
 
 
 @pytest.fixture(scope="module")
@@ -39,7 +40,14 @@ def test_dod2_explanations_grounded_and_distinct(profiles, dense_case):
     explanations = [c["explanation"].replace(c["name"], "") for c in cards]
     assert len(set(explanations)) == len(cards)
     for card in cards:
-        assert all(f["text"] in card["explanation"] for f in card["matched_facts"])
+        # The explanation selects distinguishing facts rather than reciting them all.
+        assert validate(card["explanation"], dict(card, request=dense_case), [])[0]
+        assert sentence_count(card["explanation"]) <= 2
+        price = next(f["text"] for f in card["matched_facts"] if f["kind"] == "price")
+        assert price in card["explanation"]
+        description = next(f["text"] for f in card["matched_facts"] if f["kind"] == "description")
+        quote = re.findall(r"«([^»]+)»", card["explanation"])[-1]
+        assert len(quote) <= 90 and quote.rstrip("…") in description
         assert any(f["kind"] == "description" for f in card["matched_facts"])
 
 

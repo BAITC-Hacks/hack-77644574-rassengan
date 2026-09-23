@@ -20,7 +20,7 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.data import Contractor
-from app.explain import template_explanation
+from app.explain import apply_explanations
 
 
 class MatchRequest(BaseModel):
@@ -141,7 +141,7 @@ def match(request, profiles: List[Contractor]) -> dict:
               "candidate_count": len(candidates), "passing_count": 0, "trace": [],
               "request": req.model_dump(), "available_cities": available_cities,
               "message": "В городе " + req.city + " нет подрядчиков категории " + req.category,
-              "why_fewer_than_3": None}
+              "why_fewer_than_3": None, "explainer": "template"}
     if not candidates:
         result["message"] += (". Эта категория есть в городах: " + ", ".join(available_cities) + "."
                               if available_cities else ". В каталоге этой категории нет.")
@@ -178,20 +178,26 @@ def match(request, profiles: List[Contractor]) -> dict:
                 fact("hours", "лимит часов не указан; запрошено " + format(req.hours, "g") + " ч")
             else:
                 fact("hours", "работает до " + format(p.max_hours, "g") + " ч при запросе " + format(req.hours, "g") + " ч")
-        # A contiguous excerpt from the first sentence, never a generated claim.
-        quote = re.split(r"[.!?\n]", p.description.strip(), maxsplit=1)[0][:140]
+        # Prefer an event-relevant sentence; keep a contiguous, word-complete quote.
+        sentences = [part.strip() for part in re.split(r"[.!?\n]", p.description) if part.strip()]
+        stems = EVENT_STEMS.get(_key(req.event_type), (_key(req.event_type),))
+        sentence = next((part for part in sentences if _mentions(part, stems)),
+                        sentences[0] if sentences else "")
+        quote = sentence[:140]
+        if len(sentence) > 140 and " " in quote:
+            quote = quote.rsplit(" ", 1)[0]
         if quote:
-            fact("description", "из описания: «" + quote + ("…" if len(quote) < len(re.split(r"[.!?\n]", p.description.strip(), maxsplit=1)[0]) else "") + "»")
+            fact("description", "из описания: «" + quote + ("…" if len(quote) < len(sentence) else "") + "»")
         breakdown = _score(req, p)
         card = {"id": p.id, "name": p.anon_name, "category": req.category, "city": p.city,
                 "price_from_kzt": p.price_from_kzt, "price_unknown": p.price_from_kzt is None,
                 "synthetic": p.synthetic, "city_imputed": p.city_imputed, "price_imputed": p.price_imputed,
                 "score": round(sum(breakdown.values()), 8), "score_breakdown": breakdown,
                 "matched_facts": facts}
-        card["explanation"] = template_explanation(card)
         cards.append(card)
         trace["score"] = card["score"]
     cards.sort(key=lambda card: (-card["score"], card["id"]))
+    result["explainer"] = apply_explanations(req.model_dump(), cards[:3])
     rejected = ", ".join(str(counts[key]) + " " + _reason_text(key, req, counts[key])
                          for key in REASONS if counts[key])
     result.update(outcome="found" if cards else "no_match", cards=cards[:3], passing_count=len(cards),
