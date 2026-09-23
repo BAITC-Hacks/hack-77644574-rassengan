@@ -106,6 +106,9 @@ id нужен только для сопоставления ответа: во�
 их лишь кратко, максимум в одной карточке. Одинаковая цена тоже не отличие:
 оставь её только в кратком сравнении с бюджетом во втором предложении.
 Предложение 1 начни с самого существенного отличия ЭТОЙ карточки от остальных:
+объясни её место в переданном порядке, опираясь на rank_reason — реальные причины
+начисления баллов. Цитата rank_reason может содержать совпадение, которого нет
+в сокращённом description; используй её. Не объявляй общий фактор уникальным.
 конкретный опыт, сведения из описания о запрошенном типе мероприятия, более низкая
 цена, язык или часы работы. Не начинай все карточки одинаковыми вводными словами
 или перечислением цены, календаря и формата. Если отличия не подтверждены фактами,
@@ -115,6 +118,12 @@ id нужен только для сопоставления ответа: во�
 релевантную деталь этой карточки, не повторяя первое предложение. Если новой
 детали нет, ограничься ценой и бюджетом. Не обещай итоговую цену; неизвестные
 значения требуют уточнения. Любые даты пиши в формате DD.MM.YYYY.
+В каждой карточке кратко подтверди явно запрошенные язык и часы, даже если они
+есть в shared_facts; это обязательное исключение из правила не повторять общие факты.
+Никогда не пиши об отсутствии деталей: «деталей нет», «нет сведений», «не указано»,
+«сравнение ограничивается» и подобные пустые фразы запрещены. Уточнение неизвестной
+цены формулируй как «цену нужно подтвердить», без выдуманных сумм.
+Не упоминай никакие города, кроме запрошенного, и никакие другие типы мероприятий.
 Не упоминай нерелевантные запросу услуги даже в цитатах: например, для свадьбы
 исключи похороны, поминальные обеды и другие посторонние форматы из описания.
 Используй из описания только детали, относящиеся одновременно к запрошенному типу
@@ -140,7 +149,7 @@ _EVENT_TERMS = {
 }
 
 
-def _description_for_event(text, event_type):
+def _description_for_event(text, event_type, city=None):
     """Select source clauses, without inventing details or editing catalogue facts."""
     quote = re.search(r"«(.*)»", text, re.S)
     source = quote.group(1) if quote else text
@@ -154,6 +163,13 @@ def _description_for_event(text, event_type):
     relevant, neutral = [], []
     other_events = "|".join(value for key, value in _EVENT_TERMS.items() if key != event)
     for clause in clauses:
+        if re.search(r"\b(?:Москв|Дуба|Бодрум|Ташкент)\w*", clause) and not (
+                city and re.search(re.escape(city), clause, re.I)):
+            continue
+        # Standalone proper-name list items are locations, not service evidence.
+        if (city and re.search(r"\bв\s+[А-ЯA-Z]", source) and clause.casefold() != city.casefold()
+                and re.fullmatch(r"(?:в\s+)?[А-ЯA-Z][а-яa-z]+(?:[- ][А-ЯA-Z][а-яa-z]+)*", clause)):
+            continue
         # Mixed, inseparable clauses are omitted rather than risking irrelevant services.
         if re.search(r"\b(?:" + other_events + r")", clause, re.I):
             continue
@@ -173,7 +189,7 @@ def _llm_facts(request, card):
     facts = []
     for fact in card["matched_facts"]:
         if fact["kind"] == "description":
-            text = _description_for_event(fact["text"], request.get("event_type", ""))
+            text = _description_for_event(fact["text"], request.get("event_type", ""), request.get("city"))
             if text:
                 facts.append(dict(fact, text=text))
         else:

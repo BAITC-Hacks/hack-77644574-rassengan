@@ -59,3 +59,21 @@ def test_options_from_loaded_dataset(client):
     assert "fetch('/options')" in page
     assert '<select name="category"' in page
     assert "score_breakdown" in page and "data.trace" in page
+
+
+def test_example_button_fills_text_without_submitting(client):
+    from html.parser import HTMLParser
+    class Buttons(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.example = None
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == 'button' and attrs.get('id') == 'example-button':
+                self.example = attrs
+    page = client.get('/').text
+    parser = Buttons()
+    parser.feed(page)
+    assert parser.example['type'] == 'button'
+    assert "document.getElementById('example-button').addEventListener('click'" in page
+    assert "textarea.value='Нужен ведущий на казахском на той 15 октября в Алматы, бюджет до 1 миллиона'" in page

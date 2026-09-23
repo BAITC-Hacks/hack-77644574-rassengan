@@ -13,6 +13,7 @@ textarea{font:inherit;padding:10px;resize:vertical}.missing{outline:2px solid #b
 <form id="parse-form">
 <label>Опишите заказ своими словами<textarea id="order-text" rows="3" maxlength="500" required placeholder="Нужен ведущий на казахском на той 15 октября в Алматы, бюджет до 1 миллиона"></textarea></label>
 <button type="submit" id="parse-button" disabled>Разобрать</button>
+<button type="button" id="example-button" style="font-size:14px">Пример</button>
 <div id="parse-status" aria-live="polite"></div>
 </form>
 <form id="form">
@@ -45,6 +46,11 @@ async function loadOptions(){
  }catch(error){add(results,'p',error.message+' Обновите страницу, чтобы повторить.');}
 }
 loadOptions();
+document.getElementById('example-button').addEventListener('click',()=>{
+ const textarea=document.getElementById('order-text');
+ textarea.value='Нужен ведущий на казахском на той 15 октября в Алматы, бюджет до 1 миллиона';
+ textarea.focus();
+});
 const fieldLabels={city:'Город',date:'Дата',event_type:'Тип мероприятия',category:'Категория',budget_kzt:'Бюджет',hours:'Длительность',language:'Язык'};
 form.addEventListener('input',event=>{event.target.classList.remove('missing');event.target.removeAttribute('aria-invalid');});
 document.getElementById('parse-form').addEventListener('submit',async event=>{

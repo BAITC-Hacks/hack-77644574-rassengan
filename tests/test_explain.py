@@ -268,7 +268,7 @@ def test_template_quotes_short_grounded_and_word_complete(profiles):
         assert next(f["text"] for f in card["matched_facts"] if f["kind"] == "price") in text
         assert "Обратите внимание" not in text
         assert validate(text, dict(card, request=QUERY), [])[0]
-    assert "проводы невесты" in cards[0]["explanation"].split(". ")[0]
+    assert "свадьбы" in cards[0]["explanation"].split(". ")[0]
     assert "13 лет" in cards[1]["explanation"].split(". ")[0]
     assert "более 12 лет" in cards[2]["explanation"].split(". ")[0]
 
@@ -288,3 +288,69 @@ def test_template_unique_format_mention(profiles):
     cards = match(QUERY, profiles)["cards"]
     cards[1]["score_breakdown"]["event_relevance"] = 0
     assert explain.template_explanation(cards[0], cards).startswith("Только в этом описании")
+
+
+@pytest.mark.parametrize('filler', ['Деталей нет', 'Нет сведений', 'Не указано', 'Сравнение ограничивается ценой'])
+def test_absence_filler_rejected(profiles, monkeypatch, filler):
+    batch_stub(monkeypatch, lambda text, i: filler + ', цена 1000000 тенге.' if i == 0 else text)
+    card = match(QUERY, profiles)['cards'][0]
+    assert card['explanation_source'] == 'template'
+    assert card['fallback_reason'] == 'Пустая фраза об отсутствии данных'
+
+
+@pytest.mark.parametrize('language_text, ok', [('', False), ('Язык — казахский.', True), ('Ведёт на казахском.', True)])
+def test_requested_language_required(language_text, ok):
+    card = {'request': dict(QUERY, language='казахский'), 'matched_facts': [
+        {'kind': 'language', 'text': 'язык работы — казахский'},
+        {'kind': 'price', 'text': 'цена от 1000000 тенге'}]}
+    result = validate('Цена от 1000000 тенге. ' + language_text, card, [])
+    assert result[0] is ok
+    if not ok:
+        assert result[1] == 'Не подтверждён запрошенный язык'
+
+
+def test_missing_language_llm_falls_back_and_template_confirms(profiles, monkeypatch):
+    batch_stub(monkeypatch)
+    cards = match(dict(QUERY, language='казахский', event_type='той'), profiles)['cards']
+    assert cards
+    assert all(c['explanation_source'] == 'template' for c in cards)
+    assert all(c['fallback_reason'] == 'Не подтверждён запрошенный язык' for c in cards)
+    assert all('казахский' in c['explanation'] for c in cards)
+    assert 'той обрезания' in cards[0]['explanation']
+    assert all(sentence_count(c['explanation']) <= 2 for c in cards)
+
+
+@pytest.mark.parametrize('description', [
+    'Приветствую всех, дорогие друзья! Веду той с живой музыкой.',
+    'Профессиональный ведущий с интеллигентной ' + 'подачей ' * 25 + '. Веду той с живой музыкой.',
+    'Организация мероприятий в ' + 'просторных залах ' * 20 + '. Веду той с живой музыкой.',
+])
+def test_template_uses_complete_rank_clause_not_greeting(profiles, description):
+    from dataclasses import replace
+    profile = replace(profiles[0], description=description, city='Алматы', categories=['Ведущий'],
+                      event_formats=['той'], languages=['казахский'], busy_dates=[], price_from_kzt=100000)
+    card = match(dict(QUERY, event_type='той', language='казахский'), [profile])['cards'][0]
+    assert '«Веду той с живой музыкой»' in card['explanation']
+    assert 'казахский' in card['explanation']
+    assert 'Приветствую' not in card['explanation']
+    assert 'дорогие друзья' not in card['explanation']
+    assert 'интеллигентной»' not in card['explanation']
+    assert 'в…' not in card['explanation']
+
+
+def test_incomplete_quotes_are_omitted():
+    assert explain._short_quote('Профессиональный ведущий с интеллигентной…') == ''
+    assert explain._short_quote('Организация мероприятий в…') == ''
+    assert explain._short_quote('Приветствую всех, дорогие друзья') == ''
+
+
+def test_rank_facts_reach_llm_and_city_lists_are_removed(profiles, monkeypatch):
+    query = dict(QUERY, event_type='той', language='казахский')
+    cards = match(query, profiles)['cards']
+    _, client = mock_client(monkeypatch, {'explanations': [{'id': c['id'], 'text': 'Текст'} for c in cards]})
+    assert llm.explain_cards(query, cards, 1) is not None
+    sent = json.loads(client.chat.completions.create.call_args.kwargs['messages'][1]['content'])
+    assert any(f['kind'] == 'rank_reason' and 'той обрезания' in f['text'] for f in sent['cards'][0]['facts'])
+    text = 'из описания: «Опыт ведения свадеб 13 лет, Москве, Дубае, Бодруме, Ташкенте»'
+    trimmed = llm._description_for_event(text, 'свадьба', 'Алматы')
+    assert trimmed == 'из описания: «Опыт ведения свадеб 13 лет»'

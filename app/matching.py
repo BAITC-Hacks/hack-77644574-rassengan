@@ -22,6 +22,7 @@ from pydantic_core import PydanticCustomError
 
 from app.data import CALENDAR_END, CALENDAR_START, Contractor
 from app.explain import apply_explanations
+from app.snippets import clauses
 
 
 class MatchRequest(BaseModel):
@@ -198,6 +199,32 @@ def match(request, profiles: List[Contractor]) -> dict:
         if quote:
             fact("description", "из описания: «" + quote + ("…" if len(quote) < len(sentence) else "") + "»")
         breakdown = _score(req, p)
+        if breakdown["event_relevance"] > 0:
+            matched = next((part for part in clauses(p.description) if _mentions(part, stems)), p.description)
+            # Keep the matching word in the window, even in a long description.
+            words = list(re.finditer(r"\S+", matched))
+            hit = next((i for i, word in enumerate(words) if _mentions(matched[word.start():], stems)
+                        and (i == len(words) - 1 or not _mentions(matched[words[i + 1].start():], stems))), 0)
+            start = 0 if len(matched) <= 90 else words[max(0, hit - 3)].start() if words else 0
+            snippet = matched[start:start + 90]
+            if start + 90 < len(matched):
+                snippet = snippet.rsplit(" ", 1)[0]
+            facts.append({"kind": "rank_reason", "component": "event_relevance",
+                          "text": "Совпадение формата в описании: «" + snippet + "»",
+                          "snippet": snippet, "complete": snippet == matched})
+        if breakdown["category_relevance"] > 0:
+            matched_words = sorted({word.group() for word in re.finditer(r"[а-яёa-z]+", p.description, re.I)
+                if any(_mentions(word.group(), CATEGORY_STEMS.get(token, (token,)))
+                       for token in _tokens(req.category) - {"и"})})
+            facts.append({"kind": "rank_reason", "component": "category_relevance",
+                          "text": "Категория подтверждается словами: «" + ", ".join(matched_words) + "»"})
+        for component, kind in (("language", "language"), ("hours_headroom", "hours")):
+            if breakdown[component] > 0:
+                text = next((f["text"] for f in facts if f["kind"] == kind), None)
+                if text is None and kind == "language":
+                    text = "Языки работы: " + ", ".join(p.languages)
+                if text:
+                    facts.append({"kind": "rank_reason", "component": component, "text": text})
         card = {"id": p.id, "name": p.anon_name, "category": req.category, "city": p.city,
                 "price_from_kzt": p.price_from_kzt, "price_unknown": p.price_from_kzt is None,
                 "synthetic": p.synthetic, "city_imputed": p.city_imputed, "price_imputed": p.price_imputed,

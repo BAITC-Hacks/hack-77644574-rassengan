@@ -34,6 +34,15 @@ def validate(text, card, other_texts):
     if sentence_count(text) > 2:
         return False, "Больше двух предложений"
     value = normalized(text)
+    if any(phrase in value for phrase in ("деталей нет", "нет сведений", "не указано", "сравнение ограничивается")):
+        return False, "Пустая фраза об отсутствии данных"
+    language = card.get("request", {}).get("language")
+    if language:
+        stem = normalized(language)
+        if stem.endswith("ий"):
+            stem = stem[:-2]
+        if not re.search(r"\b" + re.escape(stem) + r"\w*\b", value):
+            return False, "Не подтверждён запрошенный язык"
     if any(phrase in value for phrase in BANNED):
         return False, "Общая рекламная фраза"
     facts = card.get("matched_facts", [])

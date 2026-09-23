@@ -159,3 +159,21 @@ def test_absent_category_lists_available_cities(profiles, request_data):
     assert result["available_cities"] == ["Алматы"]
     assert "Алматы" in result["message"]
     assert result["trace"] == []
+
+
+def test_rank_reasons_match_scoring_and_original_description(profiles, request_data):
+    description = 'Приветствую всех! ' + 'Подготовка программы ' * 12 + '. Ведущий проводит тоев с живой музыкой.'
+    profile = replace(profiles[1], description=description, event_formats=['той'], languages=['казахский'],
+                      max_hours=8, busy_dates=[])
+    card = match(dict(request_data, event_type='той', language='казахский', hours=4), [profile])['cards'][0]
+    reasons = {f['component']: f for f in card['matched_facts'] if f['kind'] == 'rank_reason'}
+    assert set(reasons) == {'event_relevance', 'category_relevance', 'language', 'hours_headroom'}
+    snippet = reasons['event_relevance']['snippet']
+    assert len(snippet) <= 90 and snippet in description and 'тоев' in snippet
+    assert 'Ведущий' in reasons['category_relevance']['text']
+    assert 'казахский' in reasons['language']['text']
+    assert '8 ч' in reasons['hours_headroom']['text'] and '4 ч' in reasons['hours_headroom']['text']
+    assert all(card['score_breakdown'][component] > 0 for component in reasons)
+    assert {'price', 'format', 'availability', 'description', 'language', 'hours'} <= {
+        f['kind'] for f in card['matched_facts']}
+    assert 'казахский' in card['explanation'] and '4 ч' in card['explanation']

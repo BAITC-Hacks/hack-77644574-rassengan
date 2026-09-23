@@ -7,8 +7,9 @@ import os
 import re
 from threading import Lock
 
-from app.llm import explain_cards
+from app.llm import explain_cards, _description_for_event
 from app.explain_check import normalized, validate
+from app.snippets import short_clause
 
 _CACHE = {}
 _CACHE_LOCK = Lock()
@@ -19,28 +20,32 @@ def _facts(card):
 
 
 def _description(card):
-    quote = re.search(r"«(.*)»", _facts(card).get("description", ""))
-    return quote.group(1).rstrip("…") if quote else ""
+    facts = _facts(card)
+    description = facts.get("description", "")
+    event = re.search(r"«([^»]+)»", facts.get("format", ""))
+    if event:
+        description = _description_for_event(description, event.group(1), card.get("city")) or ""
+    quote = re.search(r"«(.*)»", description)
+    return quote.group(1) if quote else ""
 
 
 def _short_quote(text, limit=90):
-    text = text.strip()
-    if len(text) <= limit:
-        return text
-    # Reserve room for the ellipsis and never split a word.
-    words = text[:limit].rsplit(" ", 1)
-    return words[0].rstrip(",;:") + "…" if len(words) > 1 else ""
+    return short_clause(text, limit)
 
 
 def _distinguishing_fact(card, others):
     facts = _facts(card)
+    reason = next((f for f in card["matched_facts"] if f["kind"] == "rank_reason"
+                   and f.get("component") == "event_relevance" and f.get("complete")), None)
     price = card.get("price_from_kzt")
     if others and price is not None and all(
             c.get("price_from_kzt") is not None and price < c["price_from_kzt"] for c in others):
         return "Самая низкая начальная цена среди показанных вариантов"
     if (others and card.get("score_breakdown", {}).get("event_relevance", 0) > 0
             and all(c.get("score_breakdown", {}).get("event_relevance") == 0 for c in others)):
-        return "Только в этом описании упоминается запрошенный формат: " + facts["format"]
+        return "Только в этом описании упоминается запрошенный формат: " + ("«" + _short_quote(reason["snippet"]) + "»" if reason and _short_quote(reason["snippet"]) else facts["format"])
+    if reason and _short_quote(reason["snippet"]):
+        return "Совпадение с форматом в описании: «" + _short_quote(reason["snippet"]) + "»"
     for kind in ("language", "hours"):
         if kind in facts and all(_facts(c).get(kind) != facts[kind] for c in others):
             return facts[kind][0].upper() + facts[kind][1:].replace("; ", ", ")
@@ -52,7 +57,7 @@ def _distinguishing_fact(card, others):
     clauses = re.split(r"[,;]", description.split(":", 1)[-1])
     for clause in clauses:
         clause = clause.strip()
-        if (len(clause.split()) >= 2 and card.get("name", "") not in clause
+        if (len(clause.split()) >= 2 and _short_quote(clause) and card.get("name", "") not in clause
                 and all(normalized(clause) not in normalized(_description(c)) for c in others)):
             return "В описании отдельно отмечено: «" + _short_quote(clause) + "»"
     # Identical or missing descriptions cannot justify an invented distinction.
@@ -68,8 +73,17 @@ def template_explanation(card: dict, cards=None) -> str:
     if experience and "самых" in description[:experience.start()]:
         description = description[experience.start():]
     quote = _short_quote(description)
+    rank_quote = next((f["snippet"] for f in card["matched_facts"] if f["kind"] == "rank_reason"
+                       and f.get("component") == "event_relevance" and f.get("complete")
+                       and _short_quote(f["snippet"])), "")
+    quote = rank_quote or quote
     price = _facts(card)["price"]
-    tail = "В профиле: «" + quote + "», " + price if quote else price.capitalize()
+    tail = "В профиле: «" + quote + "», " + price if quote and quote not in lead else "По условиям карточки " + price
+    for kind in ("language", "hours"):
+        requirement = _facts(card).get(kind)
+        if requirement and requirement not in lead:
+            tail += ", " + requirement.replace("; ", ", ")
+    tail = tail[0].upper() + tail[1:]
     return lead + ". " + tail + "."
 
 
