@@ -165,7 +165,8 @@ def test_payload_shared_facts_are_common_to_every_card(monkeypatch, same_price):
     payload = json.loads(client.chat.completions.create.call_args.kwargs["messages"][1]["content"])
     assert payload["shared_facts"] == [availability, event_format] + ([price] if same_price else [])
     assert payload["request"] == QUERY
-    assert payload["cards"] == [{"id": c["id"], "facts": c["matched_facts"]} for c in cards]
+    assert payload["cards"] == [{"id": c["id"], "facts": c["matched_facts"],
+                                  "price_unknown": True, "price_imputed": False} for c in cards]
 
 
 @pytest.mark.parametrize("payload", [None, [], {}, {"explanations": "bad"},
@@ -354,3 +355,70 @@ def test_rank_facts_reach_llm_and_city_lists_are_removed(profiles, monkeypatch):
     text = 'из описания: «Опыт ведения свадеб 13 лет, Москве, Дубае, Бодруме, Ташкенте»'
     trimmed = llm._description_for_event(text, 'свадьба', 'Алматы')
     assert trimmed == 'из описания: «Опыт ведения свадеб 13 лет»'
+
+
+@pytest.mark.parametrize('term', ['rank_reason', 'score', 'facts', 'shared_facts', 'matched_facts', 'SCORE'])
+def test_internal_terms_trigger_template(profiles, monkeypatch, term):
+    batch_stub(monkeypatch, lambda text, i: f'В {term} совпадает формат «свадьба».' if i == 0 else text)
+    card = match(QUERY, profiles)['cards'][0]
+    assert card['explanation_source'] == 'template'
+    assert card['fallback_reason'] == 'Технический термин в тексте'
+
+
+@pytest.mark.parametrize('phrase', ['Часы не заданы', 'Язык не задан', 'Длительность не задана'])
+def test_unrequested_field_filler_rejected(phrase):
+    assert validate(phrase + ', формат «свадьба».', {}, []) == (
+        False, 'Пустая фраза об отсутствии данных')
+
+
+@pytest.mark.parametrize('phrase', ['Цену нужно подтвердить', 'Цена требует подтверждения'])
+@pytest.mark.parametrize('price, imputed, allowed', [(100000, False, False), (100000, True, True), (None, False, True), (0, False, False)])
+def test_price_confirmation_only_when_uncertain(phrase, price, imputed, allowed):
+    card = {'price_from_kzt': price, 'price_unknown': price is None, 'price_imputed': imputed,
+            'matched_facts': [{'kind': 'format', 'text': 'принимает формат «свадьба»'}]}
+    result = validate(phrase + ', формат «свадьба».', card, [])
+    assert result[0] is allowed
+    if not allowed:
+        assert result[1] == 'Известная цена не требует подтверждения'
+
+
+def test_three_llm_sentences_trigger_template(profiles, monkeypatch):
+    batch_stub(monkeypatch, lambda text, i: 'Принимает формат «свадьба». Цена от 1000000 тенге. Бюджет 1000000 тенге.' if i == 0 else text)
+    card = match(QUERY, profiles)['cards'][0]
+    assert card['fallback_reason'] == 'Больше двух предложений'
+    assert card['explanation_source'] == 'template'
+    assert sentence_count(card['explanation']) == 2
+
+
+@pytest.mark.parametrize('intro', ['Меня зовут Альфонс Элрик', 'Я — Альфонс Элрик', 'Я - Альфонс', 'Привет', 'Приветствую'])
+def test_template_skips_self_introductions(intro):
+    card = {'id': 'test', 'name': 'Имя', 'price_from_kzt': 100000, 'matched_facts': [
+        {'kind': 'description', 'text': f'из описания: «{intro}. Работаю с живой музыкой»'},
+        {'kind': 'price', 'text': 'цена от 100000 тенге при бюджете 200000 тенге'},
+        {'kind': 'format', 'text': 'принимает формат «той»'}]}
+    text = explain.template_explanation(card)
+    assert intro not in text
+    assert 'Работаю с живой музыкой' in text
+    assert sentence_count(text) == 2
+    assert 'карточк' not in text
+    assert 'час' not in text and 'язык' not in text
+    assert 'подтвердить' not in text and 'подтверждения' not in text
+
+
+def test_name_only_filter_preserves_service_description():
+    assert explain._short_quote('Я — ведущий с опытом 12 лет') == 'Я — ведущий с опытом 12 лет'
+
+
+@pytest.mark.parametrize('unknown, imputed', [(False, False), (False, True), (True, False)])
+def test_llm_receives_price_certainty_and_prompt_rules(monkeypatch, unknown, imputed):
+    _, client = mock_client(monkeypatch, {'explanations': [{'id': 'A', 'text': 'Текст'}]})
+    card = {'id': 'A', 'matched_facts': [], 'price_unknown': unknown, 'price_imputed': imputed}
+    assert llm.explain_cards(QUERY, [card], 1) is not None
+    messages = client.chat.completions.create.call_args.kwargs['messages']
+    sent = json.loads(messages[1]['content'])['cards'][0]
+    assert sent['price_unknown'] is unknown and sent['price_imputed'] is imputed
+    prompt = messages[0]['content']
+    assert 'ровно 2 предложения, второе короткое' in prompt
+    assert 'Не упоминай незапрошенные поля' in prompt
+    assert 'ТОЛЬКО если price_unknown=true' in prompt
+    assert 'Никогда не используй в тексте внутренние названия' in prompt

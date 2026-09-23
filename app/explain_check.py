@@ -34,6 +34,14 @@ def validate(text, card, other_texts):
     if sentence_count(text) > 2:
         return False, "Больше двух предложений"
     value = normalized(text)
+    if re.search(r"\b(?:rank_reason|score|facts|shared_facts|matched_facts)\b", value):
+        return False, "Технический термин в тексте"
+    if re.search(r"\bне задан\w*\b", value):
+        return False, "Пустая фраза об отсутствии данных"
+    if (card.get("price_from_kzt") is not None and not card.get("price_unknown", False)
+            and not card.get("price_imputed", False)
+            and re.search(r"нужно подтвердить|требует подтверждения", value)):
+        return False, "Известная цена не требует подтверждения"
     if any(phrase in value for phrase in ("деталей нет", "нет сведений", "не указано", "сравнение ограничивается")):
         return False, "Пустая фраза об отсутствии данных"
     language = card.get("request", {}).get("language")

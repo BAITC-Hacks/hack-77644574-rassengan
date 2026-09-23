@@ -9,7 +9,7 @@ from threading import Lock
 
 from app.llm import explain_cards, _description_for_event
 from app.explain_check import normalized, validate
-from app.snippets import short_clause
+from app.snippets import short_clause, clauses
 
 _CACHE = {}
 _CACHE_LOCK = Lock()
@@ -30,7 +30,15 @@ def _description(card):
 
 
 def _short_quote(text, limit=90):
-    return short_clause(text, limit)
+    for part in clauses(text):
+        if re.search(r"\bменя зовут\b", part, re.I):
+            continue
+        if re.fullmatch(r"Я\s*[—–-]\s*[А-ЯЁA-Z][а-яёa-z]+(?:\s+[А-ЯЁA-Z][а-яёa-z]+){0,3}", part):
+            continue
+        quote = short_clause(part, limit)
+        if quote:
+            return quote
+    return ""
 
 
 def _distinguishing_fact(card, others):
@@ -61,7 +69,9 @@ def _distinguishing_fact(card, others):
                 and all(normalized(clause) not in normalized(_description(c)) for c in others)):
             return "В описании отдельно отмечено: «" + _short_quote(clause) + "»"
     # Identical or missing descriptions cannot justify an invented distinction.
-    return "По данным карточки " + facts.get("language", facts.get("hours", facts["format"])).replace("; ", ", ")
+    if "language" in facts:
+        return "У подрядчика " + facts["language"].replace("; ", ", ")
+    return "Подрядчик " + facts.get("hours", facts["format"]).replace("; ", ", ")
 
 
 def template_explanation(card: dict, cards=None) -> str:
@@ -73,12 +83,12 @@ def template_explanation(card: dict, cards=None) -> str:
     if experience and "самых" in description[:experience.start()]:
         description = description[experience.start():]
     quote = _short_quote(description)
-    rank_quote = next((f["snippet"] for f in card["matched_facts"] if f["kind"] == "rank_reason"
+    rank_quote = next((_short_quote(f["snippet"]) for f in card["matched_facts"] if f["kind"] == "rank_reason"
                        and f.get("component") == "event_relevance" and f.get("complete")
                        and _short_quote(f["snippet"])), "")
     quote = rank_quote or quote
     price = _facts(card)["price"]
-    tail = "В профиле: «" + quote + "», " + price if quote and quote not in lead else "По условиям карточки " + price
+    tail = "В описании: «" + quote + "», " + price if quote and quote not in lead else "Для вашего бюджета: " + price
     for kind in ("language", "hours"):
         requirement = _facts(card).get(kind)
         if requirement and requirement not in lead:
