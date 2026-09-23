@@ -17,7 +17,13 @@ The regulations no longer contain a fixed technical rubric. **Paste the chosen t
 
 | Criterion (from task spec) | Pts | What is checked | Our evidence |
 |---|---|---|---|
-| {…} | {…} | {…} | {…} |
+| Task fit and it works | 25 | Solution matches the task and delivers the main scenario | All 6 mandatory conditions + DoD1–7 as automated tests (`make test`), live demo queries |
+| Technical implementation | 25 | Approach, architecture, component interaction, use of AI/agentic AI; implementation matches the claimed logic | Filter → score → explain pipeline, LLM explainer with fallback, trace of rejections |
+| README and reproducibility | 25 | Docs explain structure, technologies, launch and main scenario; reproducible from the repo | README with all rule 5.4.15 sections, `make setup && make run`, clean-clone check |
+| Value and applicability | 15 | Answers the stated problem; practical use | Helps the client choose instead of lengthening the list; honest empty/rare results |
+| Growth potential and originality | 10 | Wider application; justified non-standard approaches | Explanation grounded in facts, reusable for other catalogs |
+
+Case-specific judge priority: **quality of explanations > honest handling of rare, busy and empty categories > speed (≤10 s) > interface.**
 
 Until the task spec is known, assume experts and the AI judge also look at (rules 4.1, 5.4.15, 5.6):
 - mandatory task requirements met; main scenario works end to end;

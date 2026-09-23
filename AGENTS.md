@@ -3,13 +3,13 @@
 > Shared source of truth. `CLAUDE.md` imports this file. Fill the {placeholders} at the start of the competition.
 
 ## Goal
-- Task: {task name}. One sentence: {what we build and for whom}.
-- Main scenario: {input -> steps -> result}. Everything else is secondary.
+- Task: Smart contractor matching (#79-lite). One sentence: an event client gives city, date, event type, category and budget and gets up to 3 contractors, each with a specific, fact-based explanation.
+- Main scenario: request -> hard filters with counted rejection reasons -> deterministic ranking -> top 3 -> fact-based explanation (LLM with template fallback) -> one of 3 explicit outcomes. Everything else is secondary.
 - Mandatory task conditions live in `docs/TASK.md`. Read it before any change.
 - Scoring lives in `docs/RUBRIC.md`: the task spec's scoring table (technical round) plus Demo Day criteria. Work is judged against it.
 
 ## Stack and layout
-- Language/stack: {e.g. Python 3.12, FastAPI, pytest}. Do not add frameworks without asking.
+- Language/stack: Python 3.9+, FastAPI, uvicorn, pytest, one static HTML page. Do not add frameworks without asking.
 - All LLM calls go through one module (`llm.py` or equivalent). Never import a vendor SDK elsewhere.
 - Providers come from env vars (see `.env.example`). Never hard-code keys or model IDs in code.
 
